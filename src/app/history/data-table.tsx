@@ -45,9 +45,9 @@ export function DataTable<TData, TValue>({
           (item as any).kode
             ?.toLowerCase()
             .includes(searchText.toLowerCase()) ||
-          (item as any).nama?.toLowerCase().includes(searchText.toLowerCase())
+          (item as any).nama?.toLowerCase().includes(searchText.toLowerCase()),
       ),
-    [data, searchText]
+    [data, searchText],
   );
 
   const table = useReactTable({
@@ -64,7 +64,7 @@ export function DataTable<TData, TValue>({
     },
     initialState: {
       pagination: {
-        pageSize: 15,
+        pageSize: 100,
       },
     },
   });
@@ -99,7 +99,7 @@ export function DataTable<TData, TValue>({
                       ? null
                       : flexRender(
                           header.column.columnDef.header,
-                          header.getContext()
+                          header.getContext(),
                         )}
                   </TableHead>
                 );

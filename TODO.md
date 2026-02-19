@@ -1,26 +1,30 @@
-# TODO: Fix "Error fetching investment data" in AddMutasiDialog
+# TODO - Fix Admin2 Status Display Issue
 
-## Information Gathered
+## Problem:
 
-- The error occurs in `AddMutasiDialog` component when calling `fetchInvestmentData` for an investor.
-- The fetch request is made to `/api/investment/${investorId}`, where `investorId` is the investor's `kode`.
-- In the API route (`src/app/api/investment/[investorId]/route.ts`), it attempts to find the investor by `kode`, calculate investment data (saldo_akhir, dana_terpakai, bagi_hasil), and return JSON.
-- If the investor is not found, it returns 404. On any error, it returns 500 with a generic message.
-- In the dialog, if the response is not ok, it logs a generic "Error fetching investment data" without details.
-- Potential issues: Investor not found (invalid kode), database query failures, calculation errors (e.g., division by zero), or missing data handling.
-- The API uses Prisma to query `investor`, `mutasiRecord`, and `breakdown` models. Calculations involve aggregating data for the current month and all investors.
+When ADMIN2 logs in and views a DEBET mutation where admin1_status is still "PROSES", the status shows "Approve Reject" buttons. It should show "PENDING" instead because ADMIN1 hasn't approved yet.
 
-## Plan
+## Root Cause:
 
-- **Edit `src/app/history/add-mutasi-dialog.tsx`**: Enhance error logging in `fetchInvestmentData` to include response status, status text, and response body for better debugging.
-- **Edit `src/app/api/investment/[investorId]/route.ts`**: Add console logging at key points (e.g., after finding investor, after calculations) and include error details in the 500 response for debugging. Ensure calculations handle edge cases (e.g., no records, zero values).
-- **Dependent Files**: None directly, but changes affect how errors are reported and logged.
-- **Followup Steps**:
-  - Test the application by triggering the fetch (e.g., selecting an investor in the dialog).
-  - Check browser console and server logs for detailed error messages.
-  - If the error persists, investigate based on logs (e.g., if investor not found, check kode validity; if calculation error, review data).
-  - Revert or refine changes if needed after testing.
+In `src/app/history/columns.tsx`, the `canApprove` logic for Admin 2 column doesn't check if admin1_status is "APPROVE" before showing Approve/Reject buttons.
 
-## Confirmation
+## Fix Plan:
 
-Please confirm if I can proceed with this plan. Let me know if you have any feedback or additional details.
+### 1. src/app/history/columns.tsx
+
+- [ ] Fix the canApprove logic in "admin2_approve" column to check if admin1_status is "APPROVE"
+- [ ] Update the display logic to show "PENDING" when admin1_status is not "APPROVE"
+
+## Changes:
+
+- Add condition: `record.admin1_status === "APPROVE"` to canApprove logic
+- Display "PENDING" badge when admin1_status is "PROSES" and admin2_status is "PENDING"
+
+## Testing:
+
+After fix:
+
+1. Create new DEBET mutation → admin1_status="PROSES", admin2_status="PENDING"
+2. Login as ADMIN2 → should see "PENDING" badge (not Approve/Reject)
+3. Login as ADMIN1 → approve → admin1_status="APPROVE", admin2_status="PROSES"
+4. Login as ADMIN2 → now should see Approve/Reject buttons

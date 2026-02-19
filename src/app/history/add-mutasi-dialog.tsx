@@ -24,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { CalendarIcon, Plus } from "lucide-react";
+import { CalendarIcon, Plus, RefreshCw, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -33,6 +33,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const formSchema = z.object({
   tanggal: z.date({
@@ -44,7 +45,12 @@ const formSchema = z.object({
   mutasi: z.enum(["KREDIT", "DEBET"], {
     required_error: "Jenis mutasi wajib dipilih",
   }),
-  nilai_mutasi: z.number().min(0, "Nilai mutasi harus 0 atau lebih"),
+  nilai_mutasi: z
+    .number({
+      required_error: "Nilai mutasi wajib diisi",
+      invalid_type_error: "Nilai mutasi harus berupa angka",
+    })
+    .min(1, "Nilai mutasi harus lebih dari 0"),
   keterangan: z.string().optional(),
 });
 
@@ -54,12 +60,29 @@ interface Investor {
   kode: string | null;
   nama: string | null;
   rekening_bank: string | null;
+  whatsapp: string | null;
 }
 
-interface InvestmentData {
-  dana_terpakai: number;
+interface Transaction {
+  id: string;
+  tanggal: string;
+  kode: string;
+  nama: string | null;
+  rekening_bank: string | null;
+  mutasi: "KREDIT" | "DEBET";
+  nilai_mutasi: number;
   saldo_akhir: number;
-  bagi_hasil: number;
+  keterangan: string | null;
+  createdAt: string;
+  admin1_status: "PROSES" | "APPROVE" | "REJECT";
+  admin2_status: "PENDING" | "PROSES" | "APPROVE" | "REJECT";
+  investor: {
+    id: string;
+    nama: string | null;
+    kode: string | null;
+    rekening_bank: string | null;
+    whatsapp: string | null;
+  };
 }
 
 interface AddMutasiDialogProps {
@@ -77,15 +100,16 @@ export function AddMutasiDialog({
 }: AddMutasiDialogProps) {
   const [open, setOpen] = useState(false);
   const [investors, setInvestors] = useState<Investor[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
-  const [investmentData, setInvestmentData] = useState<InvestmentData | null>(
-    null,
-  );
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [buktiTransferFile, setBuktiTransferFile] = useState<File | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
+  const [saldoWarning, setSaldoWarning] = useState<string | null>(null);
+  const [investorSaldo, setInvestorSaldo] = useState<number | null>(null);
+  const [inputError, setInputError] = useState<string | null>(null);
 
   const {
-    register,
     handleSubmit,
     setValue,
     watch,
@@ -108,76 +132,123 @@ export function AddMutasiDialog({
   const tanggalValue = watch("tanggal");
   const kodeValue = watch("kode");
   const mutasiValue = watch("mutasi");
+  const nilaiMutasi = watch("nilai_mutasi");
 
-  // Fungsi untuk mengambil data investasi
-  const fetchInvestmentData = useCallback(async (investorId: string) => {
-    try {
-      const res = await fetch(
-        `/api/investment/${encodeURIComponent(investorId)}`,
+  // Fungsi untuk menghitung saldo investor berdasarkan transaksi yang APPROVE
+  const calculateInvestorBalance = useCallback(
+    (investorKode: string, allTransactions: Transaction[]) => {
+      // Filter transaksi untuk investor tertentu yang sudah di-approve kedua admin
+      const investorTransactions = allTransactions.filter(
+        (t) =>
+          t.kode === investorKode &&
+          t.admin1_status === "APPROVE" &&
+          t.admin2_status === "APPROVE",
       );
-      if (res.ok) {
-        const data = await res.json();
-        setInvestmentData(data);
-      } else {
-        let errorDetails = `Status: ${res.status} ${res.statusText}`;
-        try {
-          const errorBody = await res.json();
-          errorDetails += `, Response: ${JSON.stringify(errorBody)}`;
-        } catch {
-          errorDetails += ", Response: Unable to parse error body";
+
+      // Urutkan transaksi berdasarkan tanggal dan createdAt
+      const sortedTransactions = [...investorTransactions].sort((a, b) => {
+        const dateA = new Date(a.tanggal);
+        const dateB = new Date(b.tanggal);
+        if (dateA.getTime() !== dateB.getTime()) {
+          return dateA.getTime() - dateB.getTime();
         }
-        console.error("Error fetching investment data:", errorDetails);
+        return (
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      });
+
+      // Hitung saldo
+      let balance = 0;
+      sortedTransactions.forEach((t) => {
+        if (t.mutasi === "KREDIT") {
+          balance += t.nilai_mutasi;
+        } else if (t.mutasi === "DEBET") {
+          balance -= t.nilai_mutasi;
+        }
+      });
+
+      console.log(`Calculated balance for ${investorKode}:`, balance);
+      return balance;
+    },
+    [],
+  );
+
+  // Fungsi untuk mengambil data
+  const fetchData = useCallback(async () => {
+    setIsLoadingData(true);
+    setInputError(null);
+    try {
+      console.log("Fetching data...");
+
+      // Ambil data investors dan transactions
+      const [investorsRes, transactionsRes] = await Promise.all([
+        fetch("/api/investors"),
+        fetch("/api/history"),
+      ]);
+
+      if (investorsRes.ok && transactionsRes.ok) {
+        const investorsData = await investorsRes.json();
+        const transactionsData = await transactionsRes.json();
+
+        console.log("Investors data:", investorsData);
+        console.log("Transactions data:", transactionsData);
+
+        setInvestors(investorsData);
+        setTransactions(transactionsData);
+
+        // Jika dalam user mode atau sudah pilih investor, hitung saldo
+        if (isUserMode && userKode) {
+          const balance = calculateInvestorBalance(userKode, transactionsData);
+          setInvestorSaldo(balance);
+
+          // Cari data investor
+          const investor = investorsData.find(
+            (inv: Investor) => inv.kode === userKode,
+          );
+          if (investor) {
+            setValue("kode", investor.kode || "");
+            setValue("nama", investor.nama || "");
+            setValue("rekening_bank", investor.rekening_bank || "");
+          }
+        } else if (kodeValue) {
+          const balance = calculateInvestorBalance(kodeValue, transactionsData);
+          setInvestorSaldo(balance);
+        }
       }
     } catch (error) {
-      console.error("Error fetching investment data:", error);
+      console.error("Error fetching data:", error);
+      setInputError("Gagal mengambil data. Silakan coba lagi.");
+    } finally {
+      setIsLoadingData(false);
     }
-  }, []);
+  }, [isUserMode, userKode, kodeValue, setValue, calculateInvestorBalance]);
 
+  // Fungsi untuk refresh data saat dialog dibuka
+  const refreshData = useCallback(async () => {
+    await fetchData();
+  }, [fetchData]);
+
+  // Refresh data setiap kali dialog dibuka
   useEffect(() => {
-    if (isUserMode && userKode) {
-      // In user mode, fetch all investors and find the one with matching kode
-      const fetchUserInvestor = async () => {
-        setIsLoadingData(true);
-        try {
-          const res = await fetch("/api/investors");
-          if (res.ok) {
-            const data = await res.json();
-            const investor = data.find(
-              (inv: Investor) => inv.kode === userKode,
-            );
-            if (investor) {
-              setValue("kode", investor.kode || "");
-              setValue("nama", investor.nama || "");
-              setValue("rekening_bank", investor.rekening_bank || "");
-              // Fetch investment data for the user
-              fetchInvestmentData(userKode);
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching user investor:", error);
-        } finally {
-          setIsLoadingData(false);
-        }
-      };
-      fetchUserInvestor();
-    } else {
-      // Normal mode: fetch all investors
-      const fetchInvestors = async () => {
-        try {
-          const res = await fetch("/api/investors");
-          if (res.ok) {
-            const data = await res.json();
-            setInvestors(data);
-          }
-        } catch (error) {
-          console.error("Error fetching investors:", error);
-        }
-      };
-      fetchInvestors();
+    if (open) {
+      refreshData();
     }
-  }, [isUserMode, userKode, setValue, fetchInvestmentData]);
+  }, [open, refreshData]);
 
-  // Saat investor dipilih
+  // Efek untuk validasi saldo real-time
+  useEffect(() => {
+    if (mutasiValue === "DEBET" && investorSaldo !== null && nilaiMutasi > 0) {
+      if (nilaiMutasi > investorSaldo) {
+        setSaldoWarning(
+          `⚠️ Saldo tidak cukup! Maksimal penarikan: Rp ${investorSaldo.toLocaleString("id-ID")}`,
+        );
+      } else {
+        setSaldoWarning(null);
+      }
+    }
+  }, [mutasiValue, nilaiMutasi, investorSaldo]);
+
+  // Saat investor dipilih (mode admin)
   const handleInvestorSelect = (investorKode: string) => {
     const investor = investors.find((inv) => inv.kode === investorKode);
     if (investor) {
@@ -185,25 +256,65 @@ export function AddMutasiDialog({
       setValue("nama", investor.nama || "");
       setValue("rekening_bank", investor.rekening_bank || "");
 
-      // Ambil data investasi
-      fetchInvestmentData(investorKode);
+      // Hitung saldo untuk investor yang dipilih
+      const balance = calculateInvestorBalance(investorKode, transactions);
+      setInvestorSaldo(balance);
     }
   };
 
+  // Handle input nilai mutasi dengan validasi
+  const handleNilaiMutasiChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/[^0-9]/g, "");
+
+    if (value === "") {
+      setValue("nilai_mutasi", 0);
+      setInputError(null);
+      return;
+    }
+
+    const numValue = parseInt(value, 10);
+
+    if (isNaN(numValue)) {
+      setInputError("Harap masukkan angka yang valid");
+      return;
+    }
+
+    if (numValue > 1000000000) {
+      setInputError("Nilai maksimal adalah Rp 1.000.000.000");
+      return;
+    }
+
+    setValue("nilai_mutasi", numValue);
+    setInputError(null);
+  };
+
+  // Format angka untuk ditampilkan
+  const formatNumber = (num: number) => {
+    return new Intl.NumberFormat("id-ID").format(num);
+  };
+
   const onSubmit = async (data: FormData) => {
-    // Check if bukti transfer is required for user mode and KREDIT transactions
+    // Validasi input
+    if (data.nilai_mutasi <= 0) {
+      setInputError("Nilai mutasi harus lebih dari 0");
+      return;
+    }
+
+    // Validasi bukti transfer untuk user mode
     if (isUserMode && data.mutasi === "KREDIT" && !buktiTransferFile) {
       alert("Bukti Transfer wajib diisi untuk pengguna.");
       return;
     }
 
-    // Check if DEBET and insufficient balance
+    // Validasi saldo untuk DEBET
     if (
       data.mutasi === "DEBET" &&
-      investmentData &&
-      data.nilai_mutasi > investmentData.saldo_akhir
+      investorSaldo !== null &&
+      data.nilai_mutasi > investorSaldo
     ) {
-      alert("Maaf Saldo Anda Tidak Cukup");
+      alert(
+        `Maaf Saldo Anda Tidak Cukup. Saldo tersedia: Rp ${investorSaldo.toLocaleString("id-ID")}`,
+      );
       return;
     }
 
@@ -219,11 +330,12 @@ export function AddMutasiDialog({
           method: "POST",
           body: formDataUpload,
         });
+
         if (uploadResponse.ok) {
           const uploadData = await uploadResponse.json();
           buktiTransferUrl = uploadData.url;
         } else {
-          alert("Failed to upload file");
+          alert("Gagal mengupload file");
           setLoading(false);
           return;
         }
@@ -233,13 +345,15 @@ export function AddMutasiDialog({
         tanggal: format(data.tanggal, "yyyy-MM-dd"),
         kode: data.kode,
         nama: data.nama,
-        rekening_bank: data.rekening_bank,
+        rekening_bank: data.rekening_bank || "",
         mutasi: data.mutasi,
         nilai_mutasi: data.nilai_mutasi,
         keterangan: data.keterangan || "",
         bukti_transfer: buktiTransferUrl,
         status: "PROSES",
       };
+
+      console.log("Submitting mutasi:", payload);
 
       const res = await fetch("/api/history", {
         method: "POST",
@@ -253,6 +367,9 @@ export function AddMutasiDialog({
         setOpen(false);
         reset();
         setBuktiTransferFile(null);
+        setInvestorSaldo(null);
+        setSaldoWarning(null);
+        setInputError(null);
         onSuccess();
       } else {
         const error = await res.json();
@@ -282,10 +399,20 @@ export function AddMutasiDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Loading Overlay */}
+        {isLoadingData && (
+          <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-50 rounded-lg">
+            <div className="bg-white p-4 rounded-md shadow-lg flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <p className="text-sm">Memuat data...</p>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {/* Field Tanggal */}
-          <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium">Tanggal</label>
+          <div className="space-y-2">
+            <Label htmlFor="tanggal">Tanggal</Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -319,11 +446,13 @@ export function AddMutasiDialog({
 
           {/* Field Kode Investor */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Kode Investor</label>
+            <Label htmlFor="kode">Kode Investor</Label>
             {isUserMode ? (
               <Input
+                id="kode"
                 value={isLoadingData ? "Loading..." : watch("kode")}
                 readOnly
+                className="bg-gray-50"
               />
             ) : (
               <Select onValueChange={handleInvestorSelect} value={kodeValue}>
@@ -346,11 +475,12 @@ export function AddMutasiDialog({
 
           {/* Field Nama */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Nama Investor</label>
+            <Label htmlFor="nama">Nama Investor</Label>
             <Input
+              id="nama"
               value={isLoadingData ? "Loading..." : watch("nama")}
-              onChange={(e) => setValue("nama", e.target.value)}
               readOnly
+              className="bg-gray-50"
             />
             {errors.nama && (
               <p className="text-sm text-red-500">{errors.nama.message}</p>
@@ -359,24 +489,94 @@ export function AddMutasiDialog({
 
           {/* Field Rekening Bank */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Nomor Rekening</label>
+            <Label htmlFor="rekening_bank">Nomor Rekening</Label>
             <Input
-              value={watch("rekening_bank")}
+              id="rekening_bank"
+              value={watch("rekening_bank") || ""}
               onChange={(e) => setValue("rekening_bank", e.target.value)}
+              placeholder="Masukkan nomor rekening"
             />
-            {errors.rekening_bank && (
-              <p className="text-sm text-red-500">
-                {errors.rekening_bank.message}
-              </p>
-            )}
           </div>
+
+          {/* Info Saldo */}
+          {investorSaldo !== null && (
+            <div className="bg-gray-50 p-4 rounded-md space-y-3 border">
+              <div className="flex justify-between items-center">
+                <span className="font-medium">Saldo Saat Ini:</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "font-bold text-lg",
+                      saldoWarning ? "text-orange-600" : "text-blue-600",
+                    )}
+                  >
+                    Rp {investorSaldo.toLocaleString("id-ID")}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => setShowDebug(!showDebug)}
+                    title="Toggle debug info"
+                  >
+                    <RefreshCw
+                      className={cn("h-4 w-4", showDebug && "rotate-180")}
+                    />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Warning Message */}
+              {saldoWarning && (
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <span className="text-yellow-400">⚠️</span>
+                    </div>
+                    <div className="ml-3">
+                      <p className="text-sm text-yellow-700">{saldoWarning}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Debug Panel */}
+              {showDebug && (
+                <div className="mt-2 text-xs border-t pt-2 space-y-2">
+                  <p className="font-semibold">Debug Info:</p>
+                  <div className="text-gray-600">
+                    <p>
+                      Saldo dihitung dari transaksi yang sudah APPROVE oleh
+                      kedua admin.
+                    </p>
+                    <p className="mt-1">
+                      Total transaksi untuk investor ini:{" "}
+                      {transactions.filter((t) => t.kode === kodeValue).length}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-2 text-xs"
+                    onClick={refreshData}
+                    disabled={loading}
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Refresh Data
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Field Jenis Mutasi */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Jenis Mutasi</label>
+            <Label htmlFor="mutasi">Jenis Mutasi</Label>
             <Select
-              onValueChange={(value: string) => {
-                setValue("mutasi", value as "KREDIT" | "DEBET");
+              onValueChange={(value: "KREDIT" | "DEBET") => {
+                setValue("mutasi", value);
               }}
               value={mutasiValue}
             >
@@ -384,12 +584,8 @@ export function AddMutasiDialog({
                 <SelectValue placeholder="Pilih jenis mutasi" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem key="kredit" value="KREDIT">
-                  KREDIT
-                </SelectItem>
-                <SelectItem key="debet" value="DEBET">
-                  DEBET
-                </SelectItem>
+                <SelectItem value="KREDIT">KREDIT (Setoran)</SelectItem>
+                <SelectItem value="DEBET">DEBET (Penarikan)</SelectItem>
               </SelectContent>
             </Select>
             {errors.mutasi && (
@@ -399,45 +595,66 @@ export function AddMutasiDialog({
 
           {/* Field Nilai Mutasi */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Nilai Mutasi</label>
-            <Input
-              type="number"
-              step="0.01"
-              value={watch("nilai_mutasi")}
-              onChange={(e) =>
-                setValue("nilai_mutasi", parseFloat(e.target.value) || 0)
-              }
-            />
+            <Label htmlFor="nilai_mutasi">Nilai Mutasi (Rp)</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                Rp
+              </span>
+              <Input
+                id="nilai_mutasi"
+                type="text"
+                inputMode="numeric"
+                placeholder="0"
+                value={nilaiMutasi > 0 ? nilaiMutasi : ""}
+                onChange={handleNilaiMutasiChange}
+                className="pl-10"
+              />
+            </div>
+            {nilaiMutasi > 0 && (
+              <p className="text-xs text-gray-500">
+                Terformat: Rp {formatNumber(nilaiMutasi)}
+              </p>
+            )}
             {errors.nilai_mutasi && (
               <p className="text-sm text-red-500">
                 {errors.nilai_mutasi.message}
               </p>
             )}
+            {inputError && <p className="text-sm text-red-500">{inputError}</p>}
+
+            {/* Info sisa saldo untuk DEBET */}
+            {mutasiValue === "DEBET" &&
+              investorSaldo !== null &&
+              nilaiMutasi > 0 &&
+              nilaiMutasi <= investorSaldo && (
+                <p className="text-sm text-green-600">
+                  Sisa setelah penarikan: Rp{" "}
+                  {(investorSaldo - nilaiMutasi).toLocaleString("id-ID")}
+                </p>
+              )}
           </div>
 
           {/* Field Keterangan */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Keterangan</label>
+            <Label htmlFor="keterangan">Keterangan</Label>
             <Textarea
-              value={watch("keterangan")}
+              id="keterangan"
+              value={watch("keterangan") || ""}
               onChange={(e) => setValue("keterangan", e.target.value)}
+              placeholder="Masukkan keterangan (opsional)"
+              rows={3}
             />
-            {errors.keterangan && (
-              <p className="text-sm text-red-500">
-                {errors.keterangan.message}
-              </p>
-            )}
           </div>
 
-          {/* Field Bukti Transfer - Only show for KREDIT */}
+          {/* Field Bukti Transfer - Hanya untuk KREDIT */}
           {mutasiValue === "KREDIT" && (
             <div className="space-y-2">
               <Label htmlFor="bukti_transfer">
-                Bukti Transfer {isUserMode && "*"}
+                Bukti Transfer{" "}
+                {isUserMode && <span className="text-red-500">*</span>}
               </Label>
               <Input
                 id="bukti_transfer"
-                name="bukti_transfer"
                 type="file"
                 accept="image/*,.pdf"
                 required={isUserMode}
@@ -446,16 +663,37 @@ export function AddMutasiDialog({
                   setBuktiTransferFile(file);
                 }}
               />
+              {buktiTransferFile && (
+                <p className="text-xs text-gray-500">
+                  File: {buktiTransferFile.name}
+                </p>
+              )}
               {isUserMode && (
-                <p className="text-sm text-gray-500">
-                  Bukti transfer wajib diisi untuk pengguna.
+                <p className="text-xs text-gray-500">
+                  * Bukti transfer wajib diisi untuk pengguna
                 </p>
               )}
             </div>
           )}
 
-          <DialogFooter>
-            <Button type="submit" disabled={loading}>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={loading}
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              disabled={
+                loading ||
+                isLoadingData ||
+                (mutasiValue === "DEBET" && !!saldoWarning) ||
+                !!inputError
+              }
+            >
               {loading ? "Menyimpan..." : "Simpan"}
             </Button>
           </DialogFooter>

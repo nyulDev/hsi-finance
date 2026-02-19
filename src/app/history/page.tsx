@@ -18,8 +18,17 @@ import {
 } from "@/components/ui/select";
 
 const HistoryPage = () => {
-  const { data: session } = useSession();
-  const userRole = (session?.user as any)?.role;
+  const { data: session, status } = useSession();
+
+  // Debug
+  console.log("Session status:", status);
+  console.log("Session data:", session);
+
+  // Ambil role dengan aman
+  const userRole = session?.user?.role;
+
+  console.log("Current userRole:", userRole);
+
   const [data, setData] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
@@ -34,7 +43,7 @@ const HistoryPage = () => {
   const fetchData = async () => {
     console.time("fetchData");
     try {
-      const res = await fetch("/api/history");
+      const res = await fetch("/api/history?limit=1000000");
       if (res.ok) {
         const result = await res.json();
         setData(result);
@@ -48,8 +57,10 @@ const HistoryPage = () => {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (status === "authenticated") {
+      fetchData();
+    }
+  }, [status]);
 
   const handleSuccess = () => {
     fetchData();
@@ -166,7 +177,7 @@ const HistoryPage = () => {
     return matchesSearch && matchesInvestor;
   });
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return <div>Loading...</div>;
   }
 
@@ -188,106 +199,99 @@ const HistoryPage = () => {
               ))}
             </SelectContent>
           </Select>
-          {/* <Input
-            placeholder="Cari kode, nama"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            className="w-48 h-8 text-sm"
-          /> */}
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          {userRole !== "USER" &&
-            userRole !== "ADMIN1" &&
-            userRole !== "ADMIN2" && (
-              <>
-                <Button
-                  onClick={async () => {
-                    if (
-                      confirm(
-                        "Are you sure you want to process an auto debit of Used Funds for all investors?",
-                      )
-                    ) {
-                      try {
-                        const res = await fetch("/api/history/process-debet", {
-                          method: "POST",
-                        });
-                        if (res.ok) {
-                          alert(
-                            "Auto dana terpakai/bulan processed successfully",
-                          );
-                          fetchData();
-                        } else {
-                          alert("Failed to process auto dana terpakai/bulan");
-                        }
-                      } catch (error) {
-                        console.error("Error processing auto debit:", error);
-                        alert("Error processing auto debit");
-                      }
-                    }
-                  }}
-                >
-                  Dana Terpakai -
-                </Button>
-                <Button
-                  onClick={async () => {
-                    if (
-                      confirm(
-                        "Are you sure you want to process automatic Profit Sharing for all investors?",
-                      )
-                    ) {
-                      try {
-                        const res = await fetch("/api/history/process-kredit", {
-                          method: "POST",
-                        });
-                        if (res.ok) {
-                          alert("Auto kredit processed successfully");
-                          fetchData();
-                        } else {
-                          alert("Failed to process auto kredit");
-                        }
-                      } catch (error) {
-                        console.error("Error processing auto kredit:", error);
-                        alert("Error processing auto kredit");
-                      }
-                    }
-                  }}
-                >
-                  Profit Sharing
-                </Button>
-                <Button
-                  onClick={async () => {
-                    if (
-                      confirm(
-                        "Are you sure you want to process auto Credit Used Funds for all investors?",
-                      )
-                    ) {
-                      try {
-                        const res = await fetch(
-                          "/api/history/process-dana-terpakai",
-                          {
-                            method: "POST",
-                          },
+          {/* Tombol hanya muncul untuk SUPER_ADMIN */}
+          {userRole === "SUPER_ADMIN" && (
+            <>
+              <Button
+                onClick={async () => {
+                  if (
+                    confirm(
+                      "Are you sure you want to process an auto debit of Used Funds for all investors?",
+                    )
+                  ) {
+                    try {
+                      const res = await fetch("/api/history/process-debet", {
+                        method: "POST",
+                      });
+                      if (res.ok) {
+                        alert(
+                          "Auto dana terpakai/bulan processed successfully",
                         );
-                        if (res.ok) {
-                          alert(
-                            "Dana terpakai jatuh tempo processed successfully",
-                          );
-                          fetchData();
-                        } else {
-                          alert("Failed to process dana terpakai jatuh tempo");
-                        }
-                      } catch (error) {
-                        console.error("Error processing dana terpakai:", error);
-                        alert("Error processing dana terpakai jatuh tempo");
+                        fetchData();
+                      } else {
+                        alert("Failed to process auto dana terpakai/bulan");
                       }
+                    } catch (error) {
+                      console.error("Error processing auto debit:", error);
+                      alert("Error processing auto debit");
                     }
-                  }}
-                >
-                  Dana Terpakai +
-                </Button>
-                <AddMutasiDialog onSuccess={handleSuccess} />
-              </>
-            )}
+                  }
+                }}
+              >
+                Dana Terpakai -
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (
+                    confirm(
+                      "Are you sure you want to process automatic Profit Sharing for all investors?",
+                    )
+                  ) {
+                    try {
+                      const res = await fetch("/api/history/process-kredit", {
+                        method: "POST",
+                      });
+                      if (res.ok) {
+                        alert("Auto kredit processed successfully");
+                        fetchData();
+                      } else {
+                        alert("Failed to process auto kredit");
+                      }
+                    } catch (error) {
+                      console.error("Error processing auto kredit:", error);
+                      alert("Error processing auto kredit");
+                    }
+                  }
+                }}
+              >
+                Profit Sharing
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (
+                    confirm(
+                      "Are you sure you want to process auto Credit Used Funds for all investors?",
+                    )
+                  ) {
+                    try {
+                      const res = await fetch(
+                        "/api/history/process-dana-terpakai",
+                        {
+                          method: "POST",
+                        },
+                      );
+                      if (res.ok) {
+                        alert(
+                          "Dana terpakai jatuh tempo processed successfully",
+                        );
+                        fetchData();
+                      } else {
+                        alert("Failed to process dana terpakai jatuh tempo");
+                      }
+                    } catch (error) {
+                      console.error("Error processing dana terpakai:", error);
+                      alert("Error processing dana terpakai jatuh tempo");
+                    }
+                  }
+                }}
+              >
+                Dana Terpakai +
+              </Button>
+              <AddMutasiDialog onSuccess={handleSuccess} />
+            </>
+          )}
         </div>
       </div>
       <DataTable

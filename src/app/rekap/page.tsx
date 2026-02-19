@@ -63,7 +63,7 @@ export default function RekapPage() {
           const transactionsData = await transactionsRes.json();
           setTransactions(transactionsData);
 
-          // Calculate balances and first transaction dates for each investor
+          // Hitung saldo dan tanggal transaksi pertama untuk setiap investor
           const balancePerInvestor = new Map<string, number>();
           const firstTransactionDatePerInvestor = new Map<string, string>();
           const sortedTransactions = [...transactionsData].sort((a, b) => {
@@ -81,7 +81,7 @@ export default function RekapPage() {
             if (t.investor?.kode) {
               const kode = t.investor.kode;
               let currentBalance = balancePerInvestor.get(kode) || 0;
-              // Only calculate balance for transactions approved by both admins
+              // Hanya hitung saldo untuk transaksi yang disetujui kedua admin
               if (
                 t.admin1_status === "APPROVE" &&
                 t.admin2_status === "APPROVE"
@@ -94,7 +94,7 @@ export default function RekapPage() {
               }
               balancePerInvestor.set(kode, currentBalance);
 
-              // Track first transaction date
+              // Catat tanggal transaksi pertama
               if (!firstTransactionDatePerInvestor.has(kode)) {
                 firstTransactionDatePerInvestor.set(kode, t.tanggal);
               }
@@ -125,53 +125,52 @@ export default function RekapPage() {
     fetchData();
   }, []);
 
-  // Calculate summary statistics - only show if all transactions are approved by admin 2
-  const allApproved = transactions.every(
-    (t) => t.admin1_status === "APPROVE" && t.admin2_status === "APPROVE",
-  );
-  const summary = {
-    transactionCount: allApproved ? transactions.length : 0,
-    currentSaldo: allApproved
-      ? (() => {
-          const balancePerInvestor = new Map<string, number>();
-          const sortedTransactions = [...transactions].sort((a, b) => {
-            const dateA = new Date(a.tanggal);
-            const dateB = new Date(b.tanggal);
-            if (dateA.getTime() !== dateB.getTime()) {
-              return dateA.getTime() - dateB.getTime();
-            }
-            return (
-              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-            );
-          });
+  // Hitung statistik ringkasan - hanya dari transaksi yang sudah disetujui
+  const calculateSummary = () => {
+    // Filter hanya transaksi yang disetujui oleh kedua admin
+    const approvedTransactions = transactions.filter(
+      (t) => t.admin1_status === "APPROVE" && t.admin2_status === "APPROVE",
+    );
 
-          sortedTransactions.forEach((t) => {
-            if (t.investor?.kode) {
-              const kode = t.investor.kode;
-              let currentBalance = balancePerInvestor.get(kode) || 0;
-              // Only calculate balance for transactions approved by both admins
-              if (
-                t.admin1_status === "APPROVE" &&
-                t.admin2_status === "APPROVE"
-              ) {
-                if (t.mutasi === "KREDIT") {
-                  currentBalance += t.nilai_mutasi;
-                } else if (t.mutasi === "DEBET") {
-                  currentBalance -= t.nilai_mutasi;
-                }
-              }
-              balancePerInvestor.set(kode, currentBalance);
-            }
-          });
-          return Array.from(balancePerInvestor.values()).reduce(
-            (sum, saldo) => sum + saldo,
-            0,
-          );
-        })()
-      : 0,
+    // Hitung total saldo dari transaksi yang disetujui
+    let totalSaldo = 0;
+    const balancePerInvestor = new Map<string, number>();
+    const sortedTransactions = [...approvedTransactions].sort((a, b) => {
+      const dateA = new Date(a.tanggal);
+      const dateB = new Date(b.tanggal);
+      if (dateA.getTime() !== dateB.getTime()) {
+        return dateA.getTime() - dateB.getTime();
+      }
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
+    sortedTransactions.forEach((t) => {
+      if (t.investor?.kode) {
+        const kode = t.investor.kode;
+        let currentBalance = balancePerInvestor.get(kode) || 0;
+        if (t.mutasi === "KREDIT") {
+          currentBalance += t.nilai_mutasi;
+        } else if (t.mutasi === "DEBET") {
+          currentBalance -= t.nilai_mutasi;
+        }
+        balancePerInvestor.set(kode, currentBalance);
+      }
+    });
+
+    totalSaldo = Array.from(balancePerInvestor.values()).reduce(
+      (sum, saldo) => sum + saldo,
+      0,
+    );
+
+    return {
+      transactionCount: approvedTransactions.length,
+      currentSaldo: totalSaldo,
+    };
   };
 
-  // Filter investors based on search (kode and nama only) and exclude those with saldo_akhir = 0
+  const summary = calculateSummary();
+
+  // Filter investor berdasarkan pencarian (kode dan nama saja) dan kecualikan yang memiliki saldo_akhir = 0
   const filteredInvestors = investors.filter(
     (investor) =>
       investor.saldo_akhir !== 0 &&
@@ -179,14 +178,39 @@ export default function RekapPage() {
         investor.nama?.toLowerCase().includes(searchText.toLowerCase())),
   );
 
-  // Sort investors by first transaction date (earliest first)
+  // Urutkan investor berdasarkan kode: pertama berdasarkan nomor, kemudian huruf suffix, kemudian tanggal (YYYYMMDD)
   const sortedInvestors = [...filteredInvestors].sort((a, b) => {
-    const aDate = new Date(a.firstTransactionDate);
-    const bDate = new Date(b.firstTransactionDate);
-    return aDate.getTime() - bDate.getTime();
+    const aKode = a.kode || "";
+    const bKode = b.kode || "";
+
+    // Ekstrak bagian: format adalah DDMMYYYY-XXX-Z
+    // Contoh: 01012022-001-A
+    const aParts = aKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
+    const bParts = bKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
+
+    // Jika keduanya cocok dengan pola, gunakan pengurutan khusus
+    if (aParts && bParts) {
+      const [, aDate, aNum, aSuffix] = aParts;
+      const [, bDate, bNum, bSuffix] = bParts;
+
+      // Pertama bandingkan berdasarkan nomor
+      const numDiff = parseInt(aNum, 10) - parseInt(bNum, 10);
+      if (numDiff !== 0) {
+        return numDiff;
+      }
+      // Kemudian berdasarkan huruf suffix
+      if (aSuffix !== bSuffix) {
+        return aSuffix.localeCompare(bSuffix);
+      }
+      // Kemudian berdasarkan tanggal
+      return aDate.localeCompare(bDate);
+    }
+
+    // Fallback ke urutan alfabet jika pola tidak cocok
+    return aKode.localeCompare(bKode);
   });
 
-  // Pagination logic
+  // Logika Pagination
   const totalPages = Math.ceil(sortedInvestors.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedInvestors = sortedInvestors.slice(
@@ -194,7 +218,7 @@ export default function RekapPage() {
     startIndex + itemsPerPage,
   );
 
-  // Reset to first page when search changes
+  // Reset ke halaman pertama ketika pencarian berubah
   useEffect(() => {
     setCurrentPage(1);
   }, [searchText]);
@@ -215,7 +239,7 @@ export default function RekapPage() {
           <h1 className="font-semibold">Rekap Investor</h1>
         </div>
 
-        {/* Summary Cards */}
+        {/* Kartu Ringkasan */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -248,7 +272,7 @@ export default function RekapPage() {
           </Card>
         </div>
 
-        {/* Transactions History */}
+        {/* Riwayat Transaksi */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between px-4 py-4">

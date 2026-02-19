@@ -56,14 +56,14 @@ export function InvestmentsClient({
       data.filter(
         (item: any) =>
           item.kode?.toLowerCase().includes(searchText.toLowerCase()) ||
-          item.nama?.toLowerCase().includes(searchText.toLowerCase())
+          item.nama?.toLowerCase().includes(searchText.toLowerCase()),
       ),
-    [data, searchText]
+    [data, searchText],
   );
 
   const selectedRows = React.useMemo(() => {
     return Object.keys(rowSelection).filter(
-      (key) => (rowSelection as any)[key]
+      (key) => (rowSelection as any)[key],
     );
   }, [rowSelection]);
 
@@ -71,7 +71,7 @@ export function InvestmentsClient({
     if (selectedRows.length === 0) return;
     if (
       !confirm(
-        `Apakah Anda yakin ingin menghapus ${selectedRows.length} investment yang dipilih?`
+        `Apakah Anda yakin ingin menghapus ${selectedRows.length} investment yang dipilih?`,
       )
     )
       return;

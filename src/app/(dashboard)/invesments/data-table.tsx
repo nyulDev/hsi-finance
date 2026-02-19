@@ -44,10 +44,14 @@ export function DataTable<TData, TValue>({
 
   const filteredData = useMemo(
     () =>
-      data.filter((item) =>
-        (item as any).nama.toLowerCase().includes(searchText.toLowerCase())
+      data.filter(
+        (item) =>
+          (item as any).nama
+            ?.toLowerCase()
+            .includes(searchText.toLowerCase()) ||
+          (item as any).kode?.toLowerCase().includes(searchText.toLowerCase()),
       ),
-    [data, searchText]
+    [data, searchText],
   );
 
   const table = useReactTable({
@@ -87,7 +91,7 @@ export function DataTable<TData, TValue>({
                       ? null
                       : flexRender(
                           header.column.columnDef.header,
-                          header.getContext()
+                          header.getContext(),
                         )}
                   </TableHead>
                 );

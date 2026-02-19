@@ -311,12 +311,30 @@ export const columns = (
       const record = row.original;
       const isApproved = record.admin2_status === "APPROVE";
       const isRejected = record.admin2_status === "REJECT";
-      const isInProcess = record.admin2_status === "PROSES";
+
+      // Check if Admin 1 has approved
+      const admin1Approved = record.admin1_status === "APPROVE";
+
+      // Admin 2 can approve if:
+      // 1. User is ADMIN2
+      // 2. Admin 1 has approved
+      // 3. Admin 2 status is NOT already APPROVE or REJECT (masih bisa diubah)
       const canApprove =
         userRole === "ADMIN2" &&
-        (isInProcess ||
-          (record.mutasi === "DEBET" && record.admin2_status === "PENDING"));
-      if (canApprove) {
+        admin1Approved &&
+        record.admin2_status !== "APPROVE" &&
+        record.admin2_status !== "REJECT";
+
+      // Special case for DEBET mutations that need file upload
+      const needsUpload =
+        userRole === "ADMIN2" &&
+        admin1Approved &&
+        record.mutasi === "DEBET" &&
+        record.admin2_status !== "APPROVE" &&
+        record.admin2_status !== "REJECT";
+
+      // If Admin 2 can approve, show buttons
+      if (canApprove || needsUpload) {
         return (
           <div className="flex gap-1">
             <Button
@@ -325,7 +343,7 @@ export const columns = (
               className="bg-lime-400 hover:bg-lime-600 text-white"
             >
               <Check className="h-4 w-4 mr-1" />
-              Upload Bukti Transfer
+              Approve
             </Button>
             <Button
               size="default"
@@ -338,30 +356,92 @@ export const columns = (
           </div>
         );
       }
-      return (
-        <Badge
-          className={
-            isApproved
-              ? "bg-green-500/80"
-              : isRejected
-                ? "bg-red-500/80"
-                : "bg-amber-300/80"
-          }
-        >
-          {isApproved
-            ? "Approved"
-            : isRejected
-              ? "Rejected"
-              : record.admin2_status}
-        </Badge>
-      );
+
+      // Determine badge style based on state
+      let badgeClass = "";
+      let displayText = "";
+
+      if (isApproved) {
+        badgeClass = "bg-green-500/80";
+        displayText = "Approved";
+      } else if (isRejected) {
+        badgeClass = "bg-red-500/80";
+        displayText = "Rejected";
+      } else if (admin1Approved) {
+        // Jika Admin 1 sudah approve tapi Admin 2 belum action, tampilkan "PROSES"
+        badgeClass = "bg-yellow-500/80";
+        displayText = record.admin2_status || "PROSES";
+      } else {
+        // Jika Admin 1 belum approve, tampilkan "PENDING"
+        badgeClass = "bg-amber-300/80";
+        displayText = "PENDING";
+      }
+
+      return <Badge className={badgeClass}>{displayText}</Badge>;
     },
   },
+  // {
+  //   id: "admin2_approve",
+  //   header: "Admin 2",
+  //   cell: ({ row }) => {
+  //     const record = row.original;
+  //     const isApproved = record.admin2_status === "APPROVE";
+  //     const isRejected = record.admin2_status === "REJECT";
+  //     const isInProcess = record.admin2_status === "PROSES";
+  //     const canApprove =
+  //       userRole === "ADMIN2" &&
+  //       (isInProcess ||
+  //         (record.mutasi === "DEBET" && record.admin2_status === "PENDING"));
+  //     if (canApprove) {
+  //       return (
+  //         <div className="flex gap-1">
+  //           <Button
+  //             size="default"
+  //             onClick={() => onApprove && onApprove(record.id, "APPROVE")}
+  //             className="bg-lime-400 hover:bg-lime-600 text-white"
+  //           >
+  //             <Check className="h-4 w-4 mr-1" />
+  //             Approve
+  //           </Button>
+  //           <Button
+  //             size="default"
+  //             onClick={() => onReject && onReject(record.id)}
+  //             className="bg-red-600 hover:bg-red-700 text-white"
+  //           >
+  //             <X className="h-4 w-4 mr-1" />
+  //             Reject
+  //           </Button>
+  //         </div>
+  //       );
+  //     }
+  //     return (
+  //       <Badge
+  //         className={
+  //           isApproved
+  //             ? "bg-green-500/80"
+  //             : isRejected
+  //               ? "bg-red-500/80"
+  //               : "bg-amber-300/80"
+  //         }
+  //       >
+  //         {isApproved
+  //           ? "Approved"
+  //           : isRejected
+  //             ? "Rejected"
+  //             : record.admin2_status}
+  //       </Badge>
+  //     );
+  //   },
+  // },
 
   {
     id: "actions",
     cell: ({ row }) => {
       const record = row.original;
+      const showApproveReject =
+        ((userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
+          record.admin1_status === "PROSES") ||
+        (userRole === "ADMIN2" && record.admin2_status === "PROSES");
       const [isDeleting, setIsDeleting] = useState(false);
 
       const handleDelete = async () => {
@@ -395,14 +475,19 @@ export const columns = (
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => onEdit && onEdit(record.id)}
-              className="text-blue-600 focus:text-blue-600"
-            >
-              <Edit className="mr-2 h-4 w-4" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
+            {(record.admin2_status !== "APPROVE" ||
+              userRole === "SUPER_ADMIN") && (
+              <DropdownMenuItem
+                onClick={() => onEdit && onEdit(record.id)}
+                className="text-blue-600 focus:text-blue-600"
+              >
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
+              </DropdownMenuItem>
+            )}
+            {(showApproveReject || record.admin2_status !== "APPROVE") && (
+              <DropdownMenuSeparator />
+            )}
             {((userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
               record.admin1_status === "PROSES") ||
             (userRole === "ADMIN2" && record.admin2_status === "PROSES") ? (
@@ -421,36 +506,39 @@ export const columns = (
                 </DropdownMenuItem>
               </>
             ) : null}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <DropdownMenuItem
-                  onSelect={(e) => e.preventDefault()}
-                  className="text-red-600 focus:text-red-600"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Apakah Anda yakin?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Tindakan ini tidak dapat dibatalkan. Ini akan menghapus
-                    record secara permanen dan menghapus data dari server.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Batal</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDelete}
-                    disabled={isDeleting}
-                    className="bg-red-600 hover:bg-red-700"
+            {(record.admin2_status !== "APPROVE" ||
+              userRole === "SUPER_ADMIN") && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <DropdownMenuItem
+                    onSelect={(e) => e.preventDefault()}
+                    className="text-red-600 focus:text-red-600"
                   >
-                    {isDeleting ? "Menghapus..." : "Hapus"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Apakah Anda yakin?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Tindakan ini tidak dapat dibatalkan. Ini akan menghapus
+                      record secara permanen dan menghapus data dari server.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Batal</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      disabled={isDeleting}
+                      className="bg-red-600 hover:bg-red-700"
+                    >
+                      {isDeleting ? "Menghapus..." : "Hapus"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       );
