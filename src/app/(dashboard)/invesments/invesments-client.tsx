@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, ArrowRightLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import React from "react";
 import { MonthFilter } from "./month-filter";
@@ -23,6 +23,7 @@ interface InvestmentsClientProps {
   persenB: number;
   adminFee: number;
   danaTersedia: number;
+  sisaDana: number;
   month?: string;
   monthName?: string | null;
 }
@@ -35,6 +36,7 @@ export function InvestmentsClient({
   persenB,
   adminFee,
   danaTersedia,
+  sisaDana,
   month,
   monthName,
 }: InvestmentsClientProps) {
@@ -45,11 +47,6 @@ export function InvestmentsClient({
   React.useEffect(() => {
     setIsClient(true);
   }, []);
-
-  // Check if today is the last day of the month
-  const today = new Date();
-  const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  const isEndOfMonth = today.getDate() === lastDayOfMonth.getDate();
 
   const filteredData = React.useMemo(
     () =>
@@ -121,9 +118,11 @@ export function InvestmentsClient({
             </Button>
           )}
         </div>
-        {/* <AddInvesmentDialog /> */}
+        <AddInvesmentDialog />
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 px-4 mb-8 lg:px-6">
+
+      {/* Single row with all 6 cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 px-4 mb-8 lg:px-6">
         <Card className="@container/card">
           <CardHeader>
             <CardDescription>Dana Tersedia</CardDescription>
@@ -135,6 +134,7 @@ export function InvestmentsClient({
             </CardTitle>
           </CardHeader>
         </Card>
+
         <Card className="@container/card">
           <CardHeader>
             <CardDescription>Modal</CardDescription>
@@ -150,6 +150,7 @@ export function InvestmentsClient({
             </CardTitle>
           </CardHeader>
         </Card>
+
         <Card className="@container/card">
           <CardHeader>
             <CardDescription>Persen-M</CardDescription>
@@ -158,6 +159,7 @@ export function InvestmentsClient({
             </CardTitle>
           </CardHeader>
         </Card>
+
         <Card className="@container/card">
           <CardHeader>
             <CardDescription>Bagi Hasil</CardDescription>
@@ -176,6 +178,7 @@ export function InvestmentsClient({
             </p>
           </CardHeader>
         </Card>
+
         <Card className="@container/card">
           <CardHeader>
             <CardDescription>Persen-B</CardDescription>
@@ -184,7 +187,30 @@ export function InvestmentsClient({
             </CardTitle>
           </CardHeader>
         </Card>
+
+        <Card className="@container/card border-2 border-cyan-200 bg-gradient-to-br from-cyan-50 to-white">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardDescription className="text-cyan-700 font-medium">
+                Sisa Dana
+              </CardDescription>
+              <ArrowRightLeft className="h-4 w-4 text-cyan-500" />
+            </div>
+            <CardTitle className="text-lg font-semibold tabular-nums @[250px]/card:text-xl text-cyan-700">
+              {sisaDana.toLocaleString("id-ID", {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+              })}
+            </CardTitle>
+            <p className="text-xs text-cyan-600 mt-1">
+              {/* (Dana Tersedia - Modal Bulan Lalu) + Dana Tersedia Bulan
+              Berikutnya */}
+              Sisa Dana Bulan Berikutnya
+            </p>
+          </CardHeader>
+        </Card>
       </div>
+
       <DataTable
         columns={columns}
         data={filteredData}

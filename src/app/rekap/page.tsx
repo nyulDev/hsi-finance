@@ -10,6 +10,7 @@ import {
   Receipt,
   ChevronLeft,
   ChevronRight,
+  Clock,
 } from "lucide-react";
 import { ExportPdfButton } from "./export-pdf-button";
 
@@ -40,7 +41,9 @@ interface InvestorSummary {
   nama: string | null;
   rekening_bank: string | null;
   whatsapp: string | null;
-  saldo_akhir: number;
+  saldo: number;
+  dana_ditahan: number;
+  saldo_akhir_calculated: number;
   firstTransactionDate: string;
 }
 
@@ -50,7 +53,8 @@ export default function RekapPage() {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [showZeroBalance, setShowZeroBalance] = useState(false);
+  const itemsPerPage = 20; // DIUBAH DARI 10 MENJADI 20
 
   useEffect(() => {
     const fetchData = async () => {
@@ -63,8 +67,8 @@ export default function RekapPage() {
           const transactionsData = await transactionsRes.json();
           setTransactions(transactionsData);
 
-          // Hitung saldo dan tanggal transaksi pertama untuk setiap investor
-          const balancePerInvestor = new Map<string, number>();
+          const saldoPerInvestor = new Map<string, number>();
+          const danaDitahanPerInvestor = new Map<string, number>();
           const firstTransactionDatePerInvestor = new Map<string, string>();
           const sortedTransactions = [...transactionsData].sort((a, b) => {
             const dateA = new Date(a.tanggal);
@@ -80,37 +84,60 @@ export default function RekapPage() {
           sortedTransactions.forEach((t) => {
             if (t.investor?.kode) {
               const kode = t.investor.kode;
-              let currentBalance = balancePerInvestor.get(kode) || 0;
-              // Hanya hitung saldo untuk transaksi yang disetujui kedua admin
-              if (
-                t.admin1_status === "APPROVE" &&
-                t.admin2_status === "APPROVE"
-              ) {
-                if (t.mutasi === "KREDIT") {
-                  currentBalance += t.nilai_mutasi;
-                } else if (t.mutasi === "DEBET") {
-                  currentBalance -= t.nilai_mutasi;
-                }
-              }
-              balancePerInvestor.set(kode, currentBalance);
 
-              // Catat tanggal transaksi pertama
               if (!firstTransactionDatePerInvestor.has(kode)) {
                 firstTransactionDatePerInvestor.set(kode, t.tanggal);
+              }
+
+              const currentSaldo = saldoPerInvestor.get(kode) || 0;
+              const currentDanaDitahan = danaDitahanPerInvestor.get(kode) || 0;
+
+              const isApproved =
+                t.admin1_status === "APPROVE" && t.admin2_status === "APPROVE";
+
+              if (isApproved) {
+                if (t.mutasi === "KREDIT") {
+                  saldoPerInvestor.set(kode, currentSaldo + t.nilai_mutasi);
+                } else if (t.mutasi === "DEBET") {
+                  saldoPerInvestor.set(kode, currentSaldo - t.nilai_mutasi);
+                }
+              } else if (
+                t.admin1_status !== "REJECT" &&
+                t.admin2_status !== "REJECT"
+              ) {
+                if (t.mutasi === "KREDIT") {
+                  danaDitahanPerInvestor.set(
+                    kode,
+                    currentDanaDitahan + t.nilai_mutasi,
+                  );
+                } else if (t.mutasi === "DEBET") {
+                  danaDitahanPerInvestor.set(
+                    kode,
+                    currentDanaDitahan - t.nilai_mutasi,
+                  );
+                }
               }
             }
           });
 
           const investorSummaries: InvestorSummary[] = investorsData.map(
-            (investor: any) => ({
-              kode: investor.kode,
-              nama: investor.nama,
-              rekening_bank: investor.rekening_bank,
-              whatsapp: investor.whatsapp,
-              saldo_akhir: balancePerInvestor.get(investor.kode) || 0,
-              firstTransactionDate:
-                firstTransactionDatePerInvestor.get(investor.kode) || "",
-            }),
+            (investor: any) => {
+              const kode = investor.kode;
+              const saldo = saldoPerInvestor.get(kode) || 0;
+              const danaDitahan = danaDitahanPerInvestor.get(kode) || 0;
+
+              return {
+                kode: kode,
+                nama: investor.nama,
+                rekening_bank: investor.rekening_bank,
+                whatsapp: investor.whatsapp,
+                saldo: saldo,
+                dana_ditahan: danaDitahan,
+                saldo_akhir_calculated: saldo + danaDitahan,
+                firstTransactionDate:
+                  firstTransactionDatePerInvestor.get(kode) || "",
+              };
+            },
           );
 
           setInvestors(investorSummaries);
@@ -125,14 +152,11 @@ export default function RekapPage() {
     fetchData();
   }, []);
 
-  // Hitung statistik ringkasan - hanya dari transaksi yang sudah disetujui
   const calculateSummary = () => {
-    // Filter hanya transaksi yang disetujui oleh kedua admin
     const approvedTransactions = transactions.filter(
       (t) => t.admin1_status === "APPROVE" && t.admin2_status === "APPROVE",
     );
 
-    // Hitung total saldo dari transaksi yang disetujui
     let totalSaldo = 0;
     const balancePerInvestor = new Map<string, number>();
     const sortedTransactions = [...approvedTransactions].sort((a, b) => {
@@ -162,55 +186,52 @@ export default function RekapPage() {
       0,
     );
 
+    const totalDanaDitahan = investors.reduce(
+      (sum, inv) => sum + (inv.dana_ditahan || 0),
+      0,
+    );
+
     return {
       transactionCount: approvedTransactions.length,
       currentSaldo: totalSaldo,
+      totalDanaDitahan: totalDanaDitahan,
+      totalInvestorSaldo: totalSaldo + totalDanaDitahan,
     };
   };
 
   const summary = calculateSummary();
 
-  // Filter investor berdasarkan pencarian (kode dan nama saja) dan kecualikan yang memiliki saldo_akhir = 0
   const filteredInvestors = investors.filter(
     (investor) =>
-      investor.saldo_akhir !== 0 &&
+      (showZeroBalance || investor.saldo_akhir_calculated !== 0) &&
       (investor.kode?.toLowerCase().includes(searchText.toLowerCase()) ||
         investor.nama?.toLowerCase().includes(searchText.toLowerCase())),
   );
 
-  // Urutkan investor berdasarkan kode: pertama berdasarkan nomor, kemudian huruf suffix, kemudian tanggal (YYYYMMDD)
   const sortedInvestors = [...filteredInvestors].sort((a, b) => {
     const aKode = a.kode || "";
     const bKode = b.kode || "";
 
-    // Ekstrak bagian: format adalah DDMMYYYY-XXX-Z
-    // Contoh: 01012022-001-A
     const aParts = aKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
     const bParts = bKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
 
-    // Jika keduanya cocok dengan pola, gunakan pengurutan khusus
     if (aParts && bParts) {
       const [, aDate, aNum, aSuffix] = aParts;
       const [, bDate, bNum, bSuffix] = bParts;
 
-      // Pertama bandingkan berdasarkan nomor
       const numDiff = parseInt(aNum, 10) - parseInt(bNum, 10);
       if (numDiff !== 0) {
         return numDiff;
       }
-      // Kemudian berdasarkan huruf suffix
       if (aSuffix !== bSuffix) {
         return aSuffix.localeCompare(bSuffix);
       }
-      // Kemudian berdasarkan tanggal
       return aDate.localeCompare(bDate);
     }
 
-    // Fallback ke urutan alfabet jika pola tidak cocok
     return aKode.localeCompare(bKode);
   });
 
-  // Logika Pagination
   const totalPages = Math.ceil(sortedInvestors.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedInvestors = sortedInvestors.slice(
@@ -218,10 +239,9 @@ export default function RekapPage() {
     startIndex + itemsPerPage,
   );
 
-  // Reset ke halaman pertama ketika pencarian berubah
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchText]);
+  }, [searchText, showZeroBalance]);
 
   if (loading) {
     return (
@@ -232,19 +252,19 @@ export default function RekapPage() {
   }
 
   return (
-    <div className="">
-      <div className="max-w-7xl mx-auto p-6">
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto p-4">
         {/* Header */}
-        <div className="mb-8 px-4 py-2 bg-secondary rounded-md flex justify-center items-center">
-          <h1 className="font-semibold">Rekap Investor</h1>
+        <div className="mb-6 px-4 py-2 bg-white rounded-md shadow-sm flex justify-center items-center">
+          <h1 className="font-semibold text-lg">Rekap Investor</h1>
         </div>
 
         {/* Kartu Ringkasan */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <Card>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <Card className="shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
-                Saldo Terkini
+                Saldo Tersedia
               </CardTitle>
               <Wallet className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -254,78 +274,141 @@ export default function RekapPage() {
                   maximumFractionDigits: 0,
                 }).format(summary.currentSaldo)}
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Transaksi approved
+              </p>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
-                Total Transaksi
+                Dana Ditahan
               </CardTitle>
-              <Receipt className="h-4 w-4 text-muted-foreground" />
+              <Clock className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">
+                {new Intl.NumberFormat("id-ID", {
+                  maximumFractionDigits: 0,
+                }).format(summary.totalDanaDitahan)}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Transaksi pending
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Saldo</CardTitle>
+              <Receipt className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-purple-600">
-                {summary.transactionCount}
+                {new Intl.NumberFormat("id-ID", {
+                  maximumFractionDigits: 0,
+                }).format(summary.totalInvestorSaldo)}
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {summary.transactionCount} transaksi
+              </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Riwayat Transaksi */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between px-4 py-4">
-              <div className="flex items-center space-x-2">
-                <Search className="h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Cari kode atau nama..."
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                  className="max-w-sm"
-                />
+        {/* Tabel Investor */}
+        <Card className="shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+                <div className="flex items-center w-full sm:w-auto">
+                  <Search className="h-4 w-4 text-gray-400 mr-2" />
+                  <Input
+                    placeholder="Cari kode/nama..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="w-full sm:w-64 h-9"
+                  />
+                </div>
+                <Button
+                  variant={showZeroBalance ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowZeroBalance(!showZeroBalance)}
+                  className="whitespace-nowrap h-9"
+                >
+                  {showZeroBalance ? "Semua Investor" : "Sembunyikan Saldo 0"}
+                </Button>
               </div>
-              <div className="flex items-center space-x-2">
-                <ExportPdfButton
-                  summary={summary}
-                  investors={sortedInvestors}
-                />
-              </div>
+              <ExportPdfButton summary={summary} investors={sortedInvestors} />
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-4 font-medium">Kode</th>
-                    <th className="text-left py-3 px-4 font-medium">Nama</th>
-                    <th className="text-right py-3 px-4 font-medium">
-                      Saldo Akhir
+                  <tr className="border-y bg-gray-50">
+                    <th className="text-left py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Kode
                     </th>
-                    <th className="text-left py-3 px-4 font-medium">
-                      Rekening Bank
+                    <th className="text-left py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Nama
                     </th>
-                    <th className="text-left py-3 px-4 font-medium">
-                      WhatsApp
+                    <th className="text-right py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Saldo Tersedia
+                    </th>
+                    <th className="text-right py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider bg-amber-50">
+                      <span className="flex items-center justify-end gap-1">
+                        <Clock className="h-3 w-3 text-amber-500" />
+                        Dana Ditahan
+                      </span>
+                    </th>
+                    <th className="text-right py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider bg-purple-50">
+                      Total Saldo
+                    </th>
+                    <th className="text-left py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Rekening
+                    </th>
+                    <th className="text-left py-2 px-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      WA
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedInvestors.map((investor) => (
+                  {paginatedInvestors.map((investor, index) => (
                     <tr
                       key={investor.kode}
-                      className="border-b hover:bg-gray-50 dark:hover:bg-gray-800"
+                      className={`border-b hover:bg-gray-50 ${
+                        index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                      }`}
                     >
-                      <td className="py-3 px-4">{investor.kode}</td>
-                      <td className="py-3 px-4">{investor.nama}</td>
-                      <td className="py-3 px-4 text-right font-medium">
+                      <td className="py-2 px-3 text-sm">{investor.kode}</td>
+                      <td className="py-2 px-3 text-sm">{investor.nama}</td>
+                      <td className="py-2 px-3 text-sm text-right font-medium text-blue-600">
                         {new Intl.NumberFormat("id-ID", {
                           maximumFractionDigits: 0,
-                        }).format(investor.saldo_akhir)}
+                        }).format(investor.saldo)}
                       </td>
-                      <td className="py-3 px-4">{investor.rekening_bank}</td>
-                      <td className="py-3 px-4">{investor.whatsapp}</td>
+                      <td className="py-2 px-3 text-sm text-right font-medium text-amber-600 bg-amber-50/30">
+                        {investor.dana_ditahan > 0 ? (
+                          new Intl.NumberFormat("id-ID", {
+                            maximumFractionDigits: 0,
+                          }).format(investor.dana_ditahan)
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-sm text-right font-bold text-purple-600 bg-purple-50/30">
+                        {new Intl.NumberFormat("id-ID", {
+                          maximumFractionDigits: 0,
+                        }).format(investor.saldo_akhir_calculated)}
+                      </td>
+                      <td className="py-2 px-3 text-sm">
+                        {investor.rekening_bank || "-"}
+                      </td>
+                      <td className="py-2 px-3 text-sm">
+                        {investor.whatsapp || "-"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -333,19 +416,19 @@ export default function RekapPage() {
               {paginatedInvestors.length === 0 && (
                 <div className="text-center py-8 text-gray-500">
                   {searchText
-                    ? "Tidak ada investor yang cocok dengan pencarian"
+                    ? "Tidak ada investor yang cocok"
                     : "Belum ada investor"}
                 </div>
               )}
             </div>
 
-            {/* Pagination */}
+            {/* Pagination - Disesuaikan untuk 20 data per halaman */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-4">
-                <div className="text-sm text-gray-500">
-                  Menampilkan {startIndex + 1} sampai{" "}
+              <div className="flex items-center justify-between px-3 py-3 border-t">
+                <div className="text-xs text-gray-500">
+                  Menampilkan {startIndex + 1} -{" "}
                   {Math.min(startIndex + itemsPerPage, sortedInvestors.length)}{" "}
-                  dari {sortedInvestors.length} hasil
+                  dari {sortedInvestors.length} investor
                 </div>
                 <div className="flex items-center space-x-2">
                   <Button
@@ -353,6 +436,7 @@ export default function RekapPage() {
                     size="sm"
                     onClick={() => setCurrentPage(currentPage - 1)}
                     disabled={currentPage === 1}
+                    className="h-8 px-2"
                   >
                     <ChevronLeft className="h-4 w-4" />
                     Sebelumnya
@@ -365,11 +449,20 @@ export default function RekapPage() {
                     size="sm"
                     onClick={() => setCurrentPage(currentPage + 1)}
                     disabled={currentPage === totalPages}
+                    className="h-8 px-2"
                   >
                     Selanjutnya
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
+              </div>
+            )}
+
+            {/* Informasi tambahan jika total hangan lebih dari 1 halaman */}
+            {sortedInvestors.length > itemsPerPage && (
+              <div className="px-3 py-2 text-xs text-gray-400 border-t">
+                *Menampilkan 20 data per halaman. Total {sortedInvestors.length}{" "}
+                investor.
               </div>
             )}
           </CardContent>

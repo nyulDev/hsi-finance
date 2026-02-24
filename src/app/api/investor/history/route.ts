@@ -58,23 +58,33 @@ export async function GET(request: NextRequest) {
     const currentSaldo =
       historyRecords.length > 0 ? Number(historyRecords[0].saldo_akhir) : 0;
 
-    // Convert Decimal to number for client
-    const formattedHistory = historyRecords.map((h) => ({
-      id: h.id,
-      tanggal: h.tanggal,
-      kode: h.kode,
-      nama: h.nama,
-      rekening_bank: h.rekening_bank,
-      mutasi: h.mutasi,
-      nilai_mutasi: Number(h.nilai_mutasi),
-      saldo_akhir: Number(h.saldo_akhir),
-      keterangan: h.keterangan,
-      bukti_transfer: h.bukti_transfer,
-      admin1_status: h.admin1_status,
-      admin2_status: h.admin2_status,
-    }));
+    // Convert Decimal to number for client - explicitly convert enum to string
+    const formattedHistory = historyRecords.map((h) => {
+      // Get the raw values from Prisma enum
+      const admin1Val = h.admin1_status;
+      const admin2Val = h.admin2_status;
 
-    return NextResponse.json({
+      // Convert to string explicitly
+      const admin1StatusStr = admin1Val ? String(admin1Val) : "PROSES";
+      const admin2StatusStr = admin2Val ? String(admin2Val) : "PENDING";
+
+      return {
+        id: h.id,
+        tanggal: h.tanggal,
+        kode: h.kode,
+        nama: h.nama,
+        rekening_bank: h.rekening_bank,
+        mutasi: h.mutasi,
+        nilai_mutasi: Number(h.nilai_mutasi),
+        saldo_akhir: Number(h.saldo_akhir),
+        keterangan: h.keterangan,
+        bukti_transfer: h.bukti_transfer,
+        admin1_status: admin1StatusStr,
+        admin2_status: admin2StatusStr,
+      };
+    });
+
+    const response = NextResponse.json({
       investor: {
         nama: investor.nama,
         kode: investor.kode,
@@ -91,6 +101,16 @@ export async function GET(request: NextRequest) {
       },
       transactions: formattedHistory,
     });
+
+    // Add cache-control headers to prevent caching
+    response.headers.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate",
+    );
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("Expires", "0");
+
+    return response;
   } catch (error) {
     console.error("Error fetching investor history:", error);
     return NextResponse.json(

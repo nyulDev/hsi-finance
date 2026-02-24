@@ -389,6 +389,9 @@ const UserDashboard = () => {
                         nilai_mutasi: t.nilai_mutasi,
                         saldo_akhir: t.saldo_akhir,
                         keterangan: t.keterangan,
+                        // IMPORTANT: Include admin status fields
+                        admin1_status: t.admin1_status,
+                        admin2_status: t.admin2_status,
                       }))}
                     />
                     <AddMutasiDialog

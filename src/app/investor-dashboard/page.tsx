@@ -34,7 +34,8 @@ interface Transaction {
   saldo_akhir: number;
   keterangan: string | null;
   bukti_transfer: string | null;
-  // status: "PROSES" | "SELESAI"; // Temporarily removed
+  admin1_status: "PROSES" | "APPROVE" | "REJECT";
+  admin2_status: "PENDING" | "PROSES" | "APPROVE" | "REJECT";
 }
 
 interface Investor {
@@ -68,7 +69,9 @@ export default function InvestorDashboard() {
     const fetchData = async () => {
       try {
         console.log("Fetching investor history data...");
-        const response = await fetch("/api/investor/history");
+        // Add cache-busting query param
+        const cacheBuster = new Date().getTime();
+        const response = await fetch(`/api/investor/history?_=${cacheBuster}`);
         console.log("API response status:", response.status);
         if (response.ok) {
           const data = await response.json();

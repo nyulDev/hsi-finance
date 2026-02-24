@@ -9,13 +9,17 @@ interface ExportPdfButtonProps {
   summary: {
     transactionCount: number;
     currentSaldo: number;
+    totalDanaDitahan: number;
+    totalInvestorSaldo: number;
   };
   investors: Array<{
     kode: string;
     nama: string | null;
     rekening_bank: string | null;
     whatsapp: string | null;
-    saldo_akhir: number;
+    saldo: number;
+    dana_ditahan: number;
+    saldo_akhir_calculated: number;
   }>;
 }
 
@@ -53,30 +57,46 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
       pdf.setFont("helvetica", "bold");
       pdf.text("Ringkasan", 20, 55);
 
-      pdf.setFontSize(12);
+      pdf.setFontSize(11);
       pdf.setFont("helvetica", "normal");
       pdf.text(
-        `Saldo Terkini: ${new Intl.NumberFormat("id-ID").format(
-          summary.currentSaldo
+        `Saldo Tersedia: ${new Intl.NumberFormat("id-ID").format(
+          summary.currentSaldo,
         )}`,
         20,
-        70
+        65,
       );
-      pdf.text(`Total Transaksi: ${summary.transactionCount}`, 20, 80);
+      pdf.text(
+        `Dana Ditahan: ${new Intl.NumberFormat("id-ID").format(
+          summary.totalDanaDitahan,
+        )}`,
+        20,
+        73,
+      );
+      pdf.text(
+        `Total Saldo: ${new Intl.NumberFormat("id-ID").format(
+          summary.totalInvestorSaldo,
+        )}`,
+        20,
+        81,
+      );
+      pdf.text(`Total Transaksi: ${summary.transactionCount}`, 20, 89);
 
       // Table header
-      let yPosition = 100;
+      let yPosition = 105;
       pdf.setFontSize(10);
       pdf.setFont("helvetica", "bold");
 
       const headers = [
         "Kode",
         "Nama",
-        "Saldo Akhir",
+        "Saldo Tersedia",
+        "Dana Ditahan",
+        "Total Saldo",
         "Rekening Bank",
         "WhatsApp",
       ];
-      const columnWidths = [35, 75, 50, 60, 35];
+      const columnWidths = [30, 45, 35, 30, 35, 55, 30];
       let xPosition = 20;
 
       // Draw table header (without borders)
@@ -96,10 +116,18 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
       pdf.setFont("helvetica", "normal");
       yPosition += 10;
 
-      // Calculate total saldo akhir
+      // Calculate totals
+      const totalSaldoTersedia = investors.reduce(
+        (sum, investor) => sum + investor.saldo,
+        0,
+      );
+      const totalDanaDitahan = investors.reduce(
+        (sum, investor) => sum + investor.dana_ditahan,
+        0,
+      );
       const totalSaldoAkhir = investors.reduce(
-        (sum, investor) => sum + investor.saldo_akhir,
-        0
+        (sum, investor) => sum + investor.saldo_akhir_calculated,
+        0,
       );
 
       let pageNumber = 1;
@@ -114,7 +142,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
             `Page ${pageNumber} of ${totalPages}`,
             pageWidth / 2,
             pageHeight - 10,
-            { align: "center" }
+            { align: "center" },
           );
           pageNumber++;
 
@@ -150,7 +178,15 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
           new Intl.NumberFormat("id-ID", {
             minimumFractionDigits: 0,
             maximumFractionDigits: 0,
-          }).format(investor.saldo_akhir),
+          }).format(investor.saldo),
+          new Intl.NumberFormat("id-ID", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          }).format(investor.dana_ditahan),
+          new Intl.NumberFormat("id-ID", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          }).format(investor.saldo_akhir_calculated),
           investor.rekening_bank || "",
           investor.whatsapp || "",
         ];
@@ -163,7 +199,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
             pdf.getTextWidth(text) > maxWidth
               ? text.substring(
                   0,
-                  Math.floor(maxWidth / pdf.getTextWidth("W"))
+                  Math.floor(maxWidth / pdf.getTextWidth("W")),
                 ) + "..."
               : text;
 
@@ -173,7 +209,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
               truncatedText,
               xPosition + columnWidths[idx] - 2,
               yPosition,
-              { align: "right" }
+              { align: "right" },
             );
           } else {
             pdf.text(truncatedText, xPosition + 1, yPosition);
@@ -192,7 +228,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
           `Page ${pageNumber} of ${totalPages}`,
           pageWidth / 2,
           pageHeight - 10,
-          { align: "center" }
+          { align: "center" },
         );
         pageNumber++;
         pdf.addPage();
@@ -207,8 +243,16 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
         "TOTAL",
         "",
         new Intl.NumberFormat("id-ID", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(totalSaldoTersedia),
+        new Intl.NumberFormat("id-ID", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(totalDanaDitahan),
+        new Intl.NumberFormat("id-ID", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
         }).format(totalSaldoAkhir),
         "",
         "",
@@ -233,7 +277,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
         `Page ${pageNumber} of ${totalPages}`,
         pageWidth / 2,
         pageHeight - 10,
-        { align: "center" }
+        { align: "center" },
       );
 
       // Save the PDF
@@ -244,7 +288,7 @@ export function ExportPdfButton({ summary, investors }: ExportPdfButtonProps) {
       alert(
         `Gagal membuat PDF: ${
           error instanceof Error ? error.message : "Unknown error"
-        }. Silakan coba lagi.`
+        }. Silakan coba lagi.`,
       );
     }
   };

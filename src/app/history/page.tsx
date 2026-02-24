@@ -103,9 +103,14 @@ const HistoryPage = () => {
   };
 
   const handleApprove = async (id: string, status: string) => {
-    // Check if ADMIN2 and DEBET mutation requires bukti transfer
     const record = data.find((r) => r.id === id);
-    if (userRole === "ADMIN2" && record?.mutasi === "DEBET") {
+
+    // DEBUG: Log untuk memastikan kondisi terpenuhi
+    console.log("handleApprove called with:", { id, status, userRole, record });
+
+    // MODIFIKASI: Admin1 yang upload bukti transfer untuk transaksi DEBET
+    if (userRole === "ADMIN1" && record?.mutasi === "DEBET") {
+      console.log("Opening upload dialog for ADMIN1 DEBET transaction");
       setApprovingRecordId(id);
       setApproveUploadDialogOpen(true);
       return;
@@ -199,6 +204,15 @@ const HistoryPage = () => {
               ))}
             </SelectContent>
           </Select>
+          {/* Search Input */}
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="Cari..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              className="w-[200px]"
+            />
+          </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           {/* Tombol hanya muncul untuk SUPER_ADMIN */}

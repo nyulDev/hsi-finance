@@ -31,6 +31,7 @@ import {
   Loader2,
   Check,
   X,
+  Upload,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -93,6 +94,7 @@ export type HistoryRecord = {
   nilai_mutasi: number;
   saldo_akhir: number;
   keterangan: string | null;
+  bukti_transfer?: string | null;
   admin1_status?: "PROSES" | "APPROVE" | "REJECT";
   admin2_status?: "PENDING" | "PROSES" | "APPROVE" | "REJECT";
   status?: "PROSES" | "FIRST_APPROVED" | "APPROVED" | "REJECT"; // For backward compatibility
@@ -178,10 +180,6 @@ export const columns = (
     accessorKey: "nama",
     header: "Nama Investor",
   },
-  // {
-  //   accessorKey: "rekening_bank",
-  //   header: "Nomor Rekening",
-  // },
   {
     accessorKey: "mutasi",
     header: "Jenis Mutasi",
@@ -256,35 +254,78 @@ export const columns = (
       const record = row.original;
       const isApproved = record.admin1_status === "APPROVE";
       const isRejected = record.admin1_status === "REJECT";
+
+      // Cek apakah status masih dalam proses
       const isInProcess =
         record.admin1_status === "PROSES" ||
         (record as any).status === "PROSES" ||
-        (!record.admin1_status && !record.admin2_status); // Fallback for records without new fields
-      if (
-        (userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
-        isInProcess
-      ) {
-        return (
-          <div className="flex gap-1">
-            <Button
-              size="default"
-              onClick={() => onApprove && onApprove(record.id, "APPROVE")}
-              className="bg-lime-400 hover:bg-lime-600 text-white"
-            >
-              <Check className="h-4 w-4 mr-1" />
-              Approve
-            </Button>
-            <Button
-              size="default"
-              onClick={() => onReject && onReject(record.id)}
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
-              <X className="h-4 w-4 mr-1" />
-              Reject
-            </Button>
-          </div>
-        );
+        (!record.admin1_status && !record.admin2_status);
+
+      // Admin 1 bisa approve jika:
+      // 1. User adalah ADMIN1 atau SUPER_ADMIN
+      // 2. Status masih PROSES
+      const canApprove =
+        (userRole === "ADMIN1" || userRole === "SUPER_ADMIN") && isInProcess;
+
+      // Untuk transaksi DEBET, Admin 1 perlu upload bukti
+      const needsUpload = canApprove && record.mutasi === "DEBET";
+
+      if (canApprove) {
+        if (needsUpload) {
+          // Tampilkan tombol dengan indikasi perlu upload
+          return (
+            <div className="flex gap-1">
+              <Button
+                size="default"
+                onClick={() => {
+                  console.log("Approve & Upload clicked for:", record.id);
+                  onApprove && onApprove(record.id, "APPROVE");
+                }}
+                className="bg-lime-400 hover:bg-lime-600 text-white"
+                title="Upload bukti transfer terlebih dahulu"
+              >
+                <Upload className="h-4 w-4 mr-1" />
+                Approve & Upload
+              </Button>
+              <Button
+                size="default"
+                onClick={() => onReject && onReject(record.id)}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Reject
+              </Button>
+            </div>
+          );
+        } else {
+          // Untuk transaksi KREDIT, approve biasa tanpa upload
+          return (
+            <div className="flex gap-1">
+              <Button
+                size="default"
+                onClick={() => {
+                  console.log("Approve clicked for:", record.id);
+                  onApprove && onApprove(record.id, "APPROVE");
+                }}
+                className="bg-lime-400 hover:bg-lime-600 text-white"
+              >
+                <Check className="h-4 w-4 mr-1" />
+                Approve
+              </Button>
+              <Button
+                size="default"
+                onClick={() => onReject && onReject(record.id)}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Reject
+              </Button>
+            </div>
+          );
+        }
       }
+
+      // Tampilkan badge status
       return (
         <Badge
           className={
@@ -299,7 +340,7 @@ export const columns = (
             ? "Approved"
             : isRejected
               ? "Rejected"
-              : record.admin1_status}
+              : record.admin1_status || "PROSES"}
         </Badge>
       );
     },
@@ -315,31 +356,38 @@ export const columns = (
       // Check if Admin 1 has approved
       const admin1Approved = record.admin1_status === "APPROVE";
 
-      // Admin 2 can approve if:
-      // 1. User is ADMIN2
-      // 2. Admin 1 has approved
-      // 3. Admin 2 status is NOT already APPROVE or REJECT (masih bisa diubah)
+      // Check if Admin 1 has uploaded bukti transfer for DEBET
+      const hasBuktiTransfer = !!record.bukti_transfer;
+
+      // Admin 2 dapat approve jika:
+      // 1. User adalah ADMIN2 atau SUPER_ADMIN
+      // 2. Admin 1 sudah approve
+      // 3. Untuk transaksi DEBET, pastikan bukti transfer sudah diupload
+      // 4. Admin 2 belum approve/reject
       const canApprove =
-        userRole === "ADMIN2" &&
+        (userRole === "ADMIN2" || userRole === "SUPER_ADMIN") &&
         admin1Approved &&
         record.admin2_status !== "APPROVE" &&
-        record.admin2_status !== "REJECT";
+        record.admin2_status !== "REJECT" &&
+        (record.mutasi === "KREDIT" || hasBuktiTransfer); // DEBET butuh bukti transfer
 
-      // Special case for DEBET mutations that need file upload
-      const needsUpload =
-        userRole === "ADMIN2" &&
+      // Tampilkan pesan jika menunggu bukti transfer
+      const waitingForBukti =
         admin1Approved &&
         record.mutasi === "DEBET" &&
+        !hasBuktiTransfer &&
         record.admin2_status !== "APPROVE" &&
         record.admin2_status !== "REJECT";
 
-      // If Admin 2 can approve, show buttons
-      if (canApprove || needsUpload) {
+      if (canApprove) {
         return (
           <div className="flex gap-1">
             <Button
               size="default"
-              onClick={() => onApprove && onApprove(record.id, "APPROVE")}
+              onClick={() => {
+                console.log("Admin 2 Approve clicked for:", record.id);
+                onApprove && onApprove(record.id, "APPROVE");
+              }}
               className="bg-lime-400 hover:bg-lime-600 text-white"
             >
               <Check className="h-4 w-4 mr-1" />
@@ -357,7 +405,7 @@ export const columns = (
         );
       }
 
-      // Determine badge style based on state
+      // Tampilkan badge status
       let badgeClass = "";
       let displayText = "";
 
@@ -367,12 +415,13 @@ export const columns = (
       } else if (isRejected) {
         badgeClass = "bg-red-500/80";
         displayText = "Rejected";
+      } else if (waitingForBukti) {
+        badgeClass = "bg-orange-400/80";
+        displayText = "Menunggu Bukti";
       } else if (admin1Approved) {
-        // Jika Admin 1 sudah approve tapi Admin 2 belum action, tampilkan "PROSES"
         badgeClass = "bg-yellow-500/80";
         displayText = record.admin2_status || "PROSES";
       } else {
-        // Jika Admin 1 belum approve, tampilkan "PENDING"
         badgeClass = "bg-amber-300/80";
         displayText = "PENDING";
       }
@@ -380,68 +429,10 @@ export const columns = (
       return <Badge className={badgeClass}>{displayText}</Badge>;
     },
   },
-  // {
-  //   id: "admin2_approve",
-  //   header: "Admin 2",
-  //   cell: ({ row }) => {
-  //     const record = row.original;
-  //     const isApproved = record.admin2_status === "APPROVE";
-  //     const isRejected = record.admin2_status === "REJECT";
-  //     const isInProcess = record.admin2_status === "PROSES";
-  //     const canApprove =
-  //       userRole === "ADMIN2" &&
-  //       (isInProcess ||
-  //         (record.mutasi === "DEBET" && record.admin2_status === "PENDING"));
-  //     if (canApprove) {
-  //       return (
-  //         <div className="flex gap-1">
-  //           <Button
-  //             size="default"
-  //             onClick={() => onApprove && onApprove(record.id, "APPROVE")}
-  //             className="bg-lime-400 hover:bg-lime-600 text-white"
-  //           >
-  //             <Check className="h-4 w-4 mr-1" />
-  //             Approve
-  //           </Button>
-  //           <Button
-  //             size="default"
-  //             onClick={() => onReject && onReject(record.id)}
-  //             className="bg-red-600 hover:bg-red-700 text-white"
-  //           >
-  //             <X className="h-4 w-4 mr-1" />
-  //             Reject
-  //           </Button>
-  //         </div>
-  //       );
-  //     }
-  //     return (
-  //       <Badge
-  //         className={
-  //           isApproved
-  //             ? "bg-green-500/80"
-  //             : isRejected
-  //               ? "bg-red-500/80"
-  //               : "bg-amber-300/80"
-  //         }
-  //       >
-  //         {isApproved
-  //           ? "Approved"
-  //           : isRejected
-  //             ? "Rejected"
-  //             : record.admin2_status}
-  //       </Badge>
-  //     );
-  //   },
-  // },
-
   {
     id: "actions",
     cell: ({ row }) => {
       const record = row.original;
-      const showApproveReject =
-        ((userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
-          record.admin1_status === "PROSES") ||
-        (userRole === "ADMIN2" && record.admin2_status === "PROSES");
       const [isDeleting, setIsDeleting] = useState(false);
 
       const handleDelete = async () => {
@@ -465,6 +456,23 @@ export const columns = (
         }
       };
 
+      // Check if user can edit (only if not fully approved or super admin)
+      const canEdit =
+        record.admin2_status !== "APPROVE" || userRole === "SUPER_ADMIN";
+
+      // Check if user can approve/reject
+      const canAdmin1Act =
+        (userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
+        record.admin1_status === "PROSES";
+
+      const canAdmin2Act =
+        (userRole === "ADMIN2" || userRole === "SUPER_ADMIN") &&
+        record.admin2_status === "PROSES" &&
+        record.admin1_status === "APPROVE" &&
+        (record.mutasi === "KREDIT" || !!record.bukti_transfer);
+
+      const showApproveReject = canAdmin1Act || canAdmin2Act;
+
       return (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -475,8 +483,7 @@ export const columns = (
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            {(record.admin2_status !== "APPROVE" ||
-              userRole === "SUPER_ADMIN") && (
+            {canEdit && (
               <DropdownMenuItem
                 onClick={() => onEdit && onEdit(record.id)}
                 className="text-blue-600 focus:text-blue-600"
@@ -485,59 +492,69 @@ export const columns = (
                 Edit
               </DropdownMenuItem>
             )}
-            {(showApproveReject || record.admin2_status !== "APPROVE") && (
-              <DropdownMenuSeparator />
-            )}
-            {((userRole === "ADMIN1" || userRole === "SUPER_ADMIN") &&
-              record.admin1_status === "PROSES") ||
-            (userRole === "ADMIN2" && record.admin2_status === "PROSES") ? (
+            {showApproveReject && <DropdownMenuSeparator />}
+            {showApproveReject && (
               <>
-                <DropdownMenuItem
-                  onClick={() => onApprove && onApprove(record.id, "APPROVE")}
-                  className="text-green-600 focus:text-green-600"
-                >
-                  Approve
-                </DropdownMenuItem>
+                {canAdmin1Act && record.mutasi === "DEBET" ? (
+                  <DropdownMenuItem
+                    onClick={() => onApprove && onApprove(record.id, "APPROVE")}
+                    className="text-lime-600 focus:text-lime-600"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Approve & Upload
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={() => onApprove && onApprove(record.id, "APPROVE")}
+                    className="text-green-600 focus:text-green-600"
+                  >
+                    <Check className="mr-2 h-4 w-4" />
+                    Approve
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={() => onReject && onReject(record.id)}
                   className="text-red-600 focus:text-red-600"
                 >
+                  <X className="mr-2 h-4 w-4" />
                   Reject
                 </DropdownMenuItem>
               </>
-            ) : null}
-            {(record.admin2_status !== "APPROVE" ||
-              userRole === "SUPER_ADMIN") && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <DropdownMenuItem
-                    onSelect={(e) => e.preventDefault()}
-                    className="text-red-600 focus:text-red-600"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Apakah Anda yakin?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Tindakan ini tidak dapat dibatalkan. Ini akan menghapus
-                      record secara permanen dan menghapus data dari server.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Batal</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleDelete}
-                      disabled={isDeleting}
-                      className="bg-red-600 hover:bg-red-700"
+            )}
+            {canEdit && (
+              <>
+                <DropdownMenuSeparator />
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <DropdownMenuItem
+                      onSelect={(e) => e.preventDefault()}
+                      className="text-red-600 focus:text-red-600"
                     >
-                      {isDeleting ? "Menghapus..." : "Hapus"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Apakah Anda yakin?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Tindakan ini tidak dapat dibatalkan. Ini akan menghapus
+                        record secara permanen dan menghapus data dari server.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Batal</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleDelete}
+                        disabled={isDeleting}
+                        className="bg-red-600 hover:bg-red-700"
+                      >
+                        {isDeleting ? "Menghapus..." : "Hapus"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>

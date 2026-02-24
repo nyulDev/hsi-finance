@@ -118,11 +118,29 @@ export function AddBreakdownDialog() {
 
     setLoading(true);
     try {
+      // Fetch the latest kode right before submitting to avoid race conditions
+      let finalKode = formData.kode;
+      try {
+        const kodeResponse = await fetch("/api/breakdowns?action=lastKode");
+        const kodeData = await kodeResponse.json();
+        const lastKode = kodeData.lastKode;
+        let nextNumber = 1;
+        if (lastKode && lastKode.startsWith("BRK-")) {
+          const lastNumber = parseInt(lastKode.split("-")[1]);
+          nextNumber = lastNumber + 1;
+        }
+        finalKode = `BRK-${nextNumber.toString().padStart(3, "0")}`;
+        console.log("Using kode:", finalKode, "(refreshed before submit)");
+      } catch (kodeError) {
+        console.error("Error fetching latest kode:", kodeError);
+      }
+
       const response = await fetch("/api/breakdowns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
+          kode: finalKode,
           tanggal: date.toISOString(),
         }),
       });
@@ -179,7 +197,7 @@ export function AddBreakdownDialog() {
                   variant={"outline"}
                   className={cn(
                     "w-full justify-start text-left font-normal",
-                    !date && "text-muted-foreground"
+                    !date && "text-muted-foreground",
                   )}
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
@@ -199,7 +217,7 @@ export function AddBreakdownDialog() {
                     if (newDate && formData.nilai) {
                       const calculated = calculateFields(
                         newDate,
-                        formData.nilai
+                        formData.nilai,
                       );
                       setFormData({ ...formData, ...calculated });
                     }
@@ -264,7 +282,7 @@ export function AddBreakdownDialog() {
               value={
                 formData.bagi_hasil
                   ? `Rp ${parseFloat(formData.bagi_hasil).toLocaleString(
-                      "id-ID"
+                      "id-ID",
                     )}`
                   : "Rp 0"
               }
@@ -298,7 +316,7 @@ export function AddBreakdownDialog() {
               value={
                 formData.bagi_hasil_per_bulan
                   ? `Rp ${parseFloat(
-                      formData.bagi_hasil_per_bulan
+                      formData.bagi_hasil_per_bulan,
                     ).toLocaleString("id-ID")}`
                   : "Rp 0"
               }
