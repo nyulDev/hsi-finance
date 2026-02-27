@@ -29,15 +29,12 @@ const getData = async (
   danaTersedia: number;
   sisaDana: number;
 }> => {
-  // Get all investors in one query
+  // Get all investors in one query (without orderBy - will sort in memory like rekap page)
   const investors = await prisma.investor.findMany({
     select: {
       id: true,
       kode: true,
       nama: true,
-    },
-    orderBy: {
-      kode: "asc",
     },
   });
 
@@ -372,7 +369,7 @@ const getData = async (
   const sisaDana =
     danaTersedia - modalForSisaDana + danaTersediaBulanBerikutnya;
 
-  const investments = investors.map((investor) => {
+  let investments = investors.map((investor) => {
     const saldo = saldoMap.get(investor.id) || 0;
     const persen = totalSaldo > 0 ? (saldo / totalSaldo) * 100 : 0;
     const dana_terpakai = saldo * (persenM / 100);
@@ -387,6 +384,32 @@ const getData = async (
       dana_terpakai,
       bagi_hasil,
     };
+  });
+
+  // Sort investments to match rekap page sorting logic
+  // Format: \d{8}-\d+-([A-Z]) - sort by: (1) numeric part, (2) suffix letter, (3) date
+  investments = [...investments].sort((a, b) => {
+    const aKode = a.kode || "";
+    const bKode = b.kode || "";
+
+    const aParts = aKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
+    const bParts = bKode.match(/^(\d{8})-(\d+)-([A-Z])$/);
+
+    if (aParts && bParts) {
+      const [, aDate, aNum, aSuffix] = aParts;
+      const [, bDate, bNum, bSuffix] = bParts;
+
+      const numDiff = parseInt(aNum, 10) - parseInt(bNum, 10);
+      if (numDiff !== 0) {
+        return numDiff;
+      }
+      if (aSuffix !== bSuffix) {
+        return aSuffix.localeCompare(bSuffix);
+      }
+      return aDate.localeCompare(bDate);
+    }
+
+    return aKode.localeCompare(bKode);
   });
 
   return {
