@@ -142,10 +142,14 @@ export async function POST(request: NextRequest) {
       bukti_transfer,
     } = body;
 
-    // Enforce bukti_transfer for USER role
-    if (session.user.role === "USER" && !bukti_transfer) {
+    // PERBAIKAN: Enforce bukti_transfer for USER role ONLY for KREDIT transactions
+    if (
+      session.user.role === "USER" &&
+      mutasi === "KREDIT" &&
+      !bukti_transfer
+    ) {
       return NextResponse.json(
-        { error: "Bukti Transfer is required for your role." },
+        { error: "Bukti Transfer is required for setoran (KREDIT)." },
         { status: 400 },
       );
     }
@@ -160,6 +164,34 @@ export async function POST(request: NextRequest) {
         { error: "Investor not found" },
         { status: 400 },
       );
+    }
+
+    // Validasi saldo untuk transaksi DEBET
+    if (mutasi === "DEBET") {
+      // Hitung saldo yang tersedia (hanya transaksi yang sudah APPROVE)
+      const approvedTransactions = await prisma.mutasiRecord.findMany({
+        where: {
+          investorId: investor.id,
+          admin1_status: "APPROVE",
+          admin2_status: "APPROVE",
+        },
+      });
+
+      let availableBalance = 0;
+      for (const transaction of approvedTransactions) {
+        if (transaction.mutasi === "KREDIT") {
+          availableBalance += Number(transaction.nilai_mutasi);
+        } else if (transaction.mutasi === "DEBET") {
+          availableBalance -= Number(transaction.nilai_mutasi);
+        }
+      }
+
+      if (Number(nilai_mutasi) > availableBalance) {
+        return NextResponse.json(
+          { error: "Saldo tidak mencukupi untuk penarikan" },
+          { status: 400 },
+        );
+      }
     }
 
     // Check if trying to DEBET and investor has active deposits (not matured)
@@ -200,14 +232,15 @@ export async function POST(request: NextRequest) {
     const historyRecord = await prisma.mutasiRecord.create({
       data: {
         tanggal: new Date(tanggal),
-        kode,
-        nama,
-        rekening_bank,
+        // Source of truth: investor by `kode`
+        kode: investor.kode ?? kode,
+        nama: investor.nama ?? nama,
+        rekening_bank: investor.rekening_bank ?? rekening_bank,
         mutasi: mutasi as "DEBET" | "KREDIT",
         nilai_mutasi,
         saldo_akhir: 0, // Always start with 0, will be recalculated
         keterangan,
-        bukti_transfer,
+        bukti_transfer: bukti_transfer || null, // Pastikan null jika tidak ada
         admin1_status: "PROSES", // Ensure admin1_status is set to PROSES
         admin2_status: "PENDING", // Ensure admin2_status is set to PENDING
         investorId: investor.id,

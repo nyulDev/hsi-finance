@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// Note: Next.js provides `params` synchronously in Route Handlers.
+
 export async function GET(
   request: Request,
   { params }: { params: { kode: string } },
 ) {
   try {
-    const { kode } = await params;
+    const { kode } = params;
 
     // Query paling sederhana
     const result = await prisma.$queryRawUnsafe(`

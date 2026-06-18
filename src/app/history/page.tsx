@@ -215,8 +215,8 @@ const HistoryPage = () => {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          {/* Tombol hanya muncul untuk SUPER_ADMIN */}
-          {userRole === "SUPER_ADMIN" && (
+          {/* Tombol processing hanya muncul untuk SUPER_ADMIN dan ADMIN1 */}
+          {(userRole === "SUPER_ADMIN" || userRole === "ADMIN1") && (
             <>
               <Button
                 onClick={async () => {
@@ -303,8 +303,11 @@ const HistoryPage = () => {
               >
                 Dana Terpakai +
               </Button>
-              <AddMutasiDialog onSuccess={handleSuccess} />
             </>
+          )}
+          {/* Add Transaction muncul untuk SUPER_ADMIN dan ADMIN1 */}
+          {(userRole === "SUPER_ADMIN" || userRole === "ADMIN1") && (
+            <AddMutasiDialog onSuccess={handleSuccess} />
           )}
         </div>
       </div>

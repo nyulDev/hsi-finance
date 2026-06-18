@@ -183,38 +183,26 @@ export async function PATCH(
 
     // Two-step approval logic with separate admin statuses
     if (status === "APPROVE") {
-      if (userRole === "ADMIN1") {
-        if (existingRecord.admin1_status === "PROSES") {
-          updateData.admin1_status = "APPROVE";
-          updateData.admin2_status = "PROSES"; // Move to Admin2 process
-        } else {
-          return NextResponse.json(
-            { error: "Invalid approval step for Admin1" },
-            { status: 403 },
-          );
-        }
-      } else if (userRole === "ADMIN2") {
+      const isSuperAdmin = userRole === "SUPER_ADMIN";
+      
+      if ((userRole === "ADMIN1" || isSuperAdmin) && existingRecord.admin1_status === "PROSES") {
+        updateData.admin1_status = "APPROVE";
+        updateData.admin2_status = "PROSES"; // Move to Admin2 process
+      } else if ((userRole === "ADMIN2" || isSuperAdmin) && (
+        existingRecord.admin2_status === "PROSES" ||
+        (existingRecord.mutasi === "DEBET" &&
+          existingRecord.admin2_status === "PENDING")
+      )) {
+        updateData.admin2_status = "APPROVE";
         if (
-          existingRecord.admin2_status === "PROSES" ||
-          (existingRecord.mutasi === "DEBET" &&
-            existingRecord.admin2_status === "PENDING")
+          existingRecord.mutasi === "DEBET" &&
+          existingRecord.admin1_status !== "APPROVE"
         ) {
-          updateData.admin2_status = "APPROVE";
-          if (
-            existingRecord.mutasi === "DEBET" &&
-            existingRecord.admin1_status !== "APPROVE"
-          ) {
-            updateData.admin1_status = "APPROVE";
-          }
-        } else {
-          return NextResponse.json(
-            { error: "Invalid approval step for Admin2" },
-            { status: 403 },
-          );
+          updateData.admin1_status = "APPROVE";
         }
       } else {
         return NextResponse.json(
-          { error: "Insufficient permissions" },
+          { error: "Invalid approval step or insufficient permissions" },
           { status: 403 },
         );
       }

@@ -15,6 +15,13 @@ export async function POST(request: NextRequest) {
     });
 
     const currentDate = new Date();
+
+    const threeMonthsLater = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + 3,
+      1,
+    );
+
     const monthNames = [
       "Januari",
       "Februari",
@@ -56,27 +63,43 @@ export async function POST(request: NextRequest) {
       0,
     );
 
-    const allLatestRecords = await Promise.all(
-      investors
-        .filter((investor) => investor.kode)
-        .map(async (investor) => {
-          const latestRecord = await prisma.mutasiRecord.findFirst({
-            where: { investorId: investor.id },
-            orderBy: { createdAt: "desc" },
-            select: { saldo_akhir: true },
-          });
-          return latestRecord ? Number(latestRecord.saldo_akhir) : 0;
-        }),
-    );
+    const saldoMap = new Map<string, number>();
+    let totalSaldo = 0;
 
-    const totalSaldo = allLatestRecords.reduce((sum, saldo) => sum + saldo, 0);
+    // Fetch the latest mutasiRecord for all investors in a single query
+    const latestRecords = await prisma.mutasiRecord.findMany({
+      distinct: ["investorId"],
+      orderBy: [
+        { tanggal: "desc" },
+        { createdAt: "desc" },
+      ],
+      select: {
+        investorId: true,
+        saldo_akhir: true,
+      },
+    });
 
-    // Calculate Modal: total nilai from breakdowns for 3 months ago
+    // Populate the saldoMap
+    for (const record of latestRecords) {
+      if (record.investorId) {
+        saldoMap.set(record.investorId, Number(record.saldo_akhir));
+      }
+    }
+
+    // Include all valid investors and calculate totalSaldo
+    investors
+      .filter((investor) => investor.kode)
+      .forEach((investor) => {
+        const saldo = saldoMap.get(investor.id) || 0;
+        totalSaldo += saldo;
+      });
+
+    // Calculate Modal: total nilai from breakdowns for current month
     const modalAggregate = await prisma.breakdown.aggregate({
       where: {
         tanggal: {
-          gte: startOfThreeMonthsAgo,
-          lte: endOfThreeMonthsAgo,
+          gte: startOfCurrentMonth,
+          lte: endOfCurrentMonth,
         },
       },
       _sum: {
@@ -93,15 +116,19 @@ export async function POST(request: NextRequest) {
 
     // Bagi Hasil: 5% of modal, then deduct 5% admin fee
     const bagiHasil = 0.05 * modal * 0.95;
+    
+    console.log("Profit Sharing Calculations:", { modal, totalSaldo, bagiHasil });
+
+    const mutationsToCreate: any[] = [];
 
     for (let i = 0; i < investors.length; i++) {
       const investor = investors[i];
       if (!investor.kode) continue;
 
-      const saldo = allLatestRecords[i];
+      const previousSaldo = saldoMap.get(investor.id) || 0;
 
       // Calculate persen
-      const persen = totalSaldo > 0 ? (saldo / totalSaldo) * 100 : 0;
+      const persen = totalSaldo > 0 ? (previousSaldo / totalSaldo) * 100 : 0;
 
       // Calculate bagi_hasil: persen / 100 * bagiHasil
       const bagi_hasil = (persen / 100) * bagiHasil;
@@ -110,46 +137,33 @@ export async function POST(request: NextRequest) {
       const nilaiMutasi = bagi_hasil;
 
       if (nilaiMutasi > 0) {
-        // Get last saldo for this investor
-        const lastTransaction = await prisma.mutasiRecord.findFirst({
-          where: { investorId: investor.id },
-          orderBy: [
-            {
-              tanggal: "desc",
-            },
-            {
-              createdAt: "desc",
-            },
-          ],
-          select: { saldo_akhir: true },
-        });
-
-        const previousSaldo = lastTransaction
-          ? Number(lastTransaction.saldo_akhir)
-          : 0;
-
         const newSaldo = previousSaldo + nilaiMutasi;
 
-        await prisma.mutasiRecord.create({
-          data: {
-            tanggal: currentDate,
-            kode: investor.kode,
-            nama: investor.nama,
-            rekening_bank: investor.rekening_bank,
-            mutasi: "KREDIT",
-            nilai_mutasi: nilaiMutasi,
-            saldo_akhir: newSaldo,
-            keterangan: `Profit Sharing (${
-              monthNames[threeMonthsAgo.getMonth()]
-            })`,
-            investorId: investor.id,
-          },
+        mutationsToCreate.push({
+          tanggal: threeMonthsLater,
+          kode: investor.kode,
+          nama: investor.nama,
+          rekening_bank: investor.rekening_bank,
+          mutasi: "KREDIT",
+          nilai_mutasi: nilaiMutasi,
+          saldo_akhir: newSaldo,
+          keterangan: `Profit Sharing (${
+            monthNames[currentDate.getMonth()]
+          })`,
+          investorId: investor.id,
         });
 
         console.log(
-          `Kredit processed for investor ${investor.kode}: ${nilaiMutasi}`,
+          `Kredit calculated for investor ${investor.kode}: ${nilaiMutasi}`,
         );
       }
+    }
+
+    if (mutationsToCreate.length > 0) {
+      await prisma.mutasiRecord.createMany({
+        data: mutationsToCreate,
+      });
+      console.log(`Successfully batch inserted ${mutationsToCreate.length} kredit mutations.`);
     }
 
     return NextResponse.json({

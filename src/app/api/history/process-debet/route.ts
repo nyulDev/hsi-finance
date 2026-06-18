@@ -42,39 +42,46 @@ export async function POST(request: NextRequest) {
       0,
     );
 
+    // Fetch all kredit sums up to currentDate for all investors
+    const groupedKredit = await prisma.mutasiRecord.groupBy({
+      by: ["investorId"],
+      where: {
+        tanggal: { lte: currentDate },
+        mutasi: "KREDIT",
+      },
+      _sum: { nilai_mutasi: true },
+    });
+
+    // Fetch all debet sums up to currentDate for all investors
+    const groupedDebet = await prisma.mutasiRecord.groupBy({
+      by: ["investorId"],
+      where: {
+        tanggal: { lte: currentDate },
+        mutasi: "DEBET",
+      },
+      _sum: { nilai_mutasi: true },
+    });
+
+    const kreditMap = new Map(
+      groupedKredit.map((g) => [g.investorId, Number(g._sum.nilai_mutasi || 0)]),
+    );
+    const debetMap = new Map(
+      groupedDebet.map((g) => [g.investorId, Number(g._sum.nilai_mutasi || 0)]),
+    );
+
     // Get all saldos using the same method as investments page (sum kredit - sum debet up to current date)
     const saldoMap = new Map<string, number>();
     let totalSaldo = 0;
 
-    await Promise.all(
-      investors
-        .filter((investor) => investor.kode)
-        .map(async (investor) => {
-          const kreditSum = await prisma.mutasiRecord.aggregate({
-            where: {
-              investorId: investor.id,
-              tanggal: { lte: currentDate },
-              mutasi: "KREDIT",
-            },
-            _sum: { nilai_mutasi: true },
-          });
-
-          const debetSum = await prisma.mutasiRecord.aggregate({
-            where: {
-              investorId: investor.id,
-              tanggal: { lte: currentDate },
-              mutasi: "DEBET",
-            },
-            _sum: { nilai_mutasi: true },
-          });
-
-          const saldo =
-            Number(kreditSum._sum.nilai_mutasi || 0) -
-            Number(debetSum._sum.nilai_mutasi || 0);
-          saldoMap.set(investor.id, saldo);
-          totalSaldo += saldo;
-        }),
-    );
+    investors
+      .filter((investor) => investor.kode)
+      .forEach((investor) => {
+        const kredit = kreditMap.get(investor.id) || 0;
+        const debet = debetMap.get(investor.id) || 0;
+        const saldo = kredit - debet;
+        saldoMap.set(investor.id, saldo);
+        totalSaldo += saldo;
+      });
 
     const allLatestRecords = investors.map(
       (investor) => saldoMap.get(investor.id) || 0,
@@ -100,6 +107,28 @@ export async function POST(request: NextRequest) {
     const persenM =
       totalSaldo > 0 ? Math.min(100, (modal / totalSaldo) * 100) : 0;
 
+    // Fetch the absolute latest mutasiRecord for all investors in a single query to compute the new saldo_akhir
+    const latestRecords = await prisma.mutasiRecord.findMany({
+      distinct: ["investorId"],
+      orderBy: [
+        { tanggal: "desc" },
+        { createdAt: "desc" },
+      ],
+      select: {
+        investorId: true,
+        saldo_akhir: true,
+      },
+    });
+
+    const latestSaldoMap = new Map<string, number>();
+    for (const record of latestRecords) {
+      if (record.investorId) {
+        latestSaldoMap.set(record.investorId, Number(record.saldo_akhir));
+      }
+    }
+
+    const mutationsToCreate: any[] = [];
+
     for (let i = 0; i < investors.length; i++) {
       const investor = investors[i];
       if (!investor.kode) continue;
@@ -113,44 +142,34 @@ export async function POST(request: NextRequest) {
       const nilaiMutasi = dana_terpakai;
 
       if (nilaiMutasi > 0) {
-        // Get last saldo for this investor
-        const lastTransaction = await prisma.mutasiRecord.findFirst({
-          where: { investorId: investor.id },
-          orderBy: [
-            {
-              tanggal: "desc",
-            },
-            {
-              createdAt: "desc",
-            },
-          ],
-          select: { saldo_akhir: true },
-        });
-
-        const previousSaldo = lastTransaction
-          ? Number(lastTransaction.saldo_akhir)
-          : 0;
-
+        const previousSaldo = latestSaldoMap.get(investor.id) || 0;
         const newSaldo = previousSaldo - nilaiMutasi;
 
-        await prisma.mutasiRecord.create({
-          data: {
-            tanggal: currentDate,
-            kode: investor.kode,
-            nama: investor.nama,
-            rekening_bank: investor.rekening_bank,
-            mutasi: "DEBET",
-            nilai_mutasi: nilaiMutasi,
-            saldo_akhir: newSaldo,
-            keterangan: `Dana terpakai ${monthNames[currentDate.getMonth()]}`,
-            investorId: investor.id,
-          },
+        mutationsToCreate.push({
+          tanggal: currentDate,
+          kode: investor.kode,
+          nama: investor.nama,
+          rekening_bank: investor.rekening_bank,
+          mutasi: "DEBET",
+          nilai_mutasi: nilaiMutasi,
+          saldo_akhir: newSaldo,
+          keterangan: `Dana terpakai ${monthNames[currentDate.getMonth()]}`,
+          investorId: investor.id,
+          admin1_status: "APPROVE",
+          admin2_status: "APPROVE",
         });
 
         console.log(
-          `Debet processed for investor ${investor.kode}: ${nilaiMutasi}`,
+          `Debet calculated for investor ${investor.kode}: ${nilaiMutasi}`,
         );
       }
+    }
+
+    if (mutationsToCreate.length > 0) {
+      await prisma.mutasiRecord.createMany({
+        data: mutationsToCreate,
+      });
+      console.log(`Successfully batch inserted ${mutationsToCreate.length} debet mutations.`);
     }
 
     return NextResponse.json({

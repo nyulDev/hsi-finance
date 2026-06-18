@@ -16,65 +16,74 @@ export async function POST(request: NextRequest) {
 
     const currentDate = new Date();
 
-    // Get 3 months ago date
-    const threeMonthsAgo = new Date(
+    // Get 3 months in the future date (e.g., clicked in February → transaction in May)
+    const threeMonthsLater = new Date(
       currentDate.getFullYear(),
-      currentDate.getMonth() - 3,
+      currentDate.getMonth() + 3,
       1,
     );
 
-    // Get start and end of 3 months ago month
-    const startOfThreeMonthsAgo = new Date(
-      threeMonthsAgo.getFullYear(),
-      threeMonthsAgo.getMonth(),
+    // Get start and end of current month (the month when button is clicked)
+    const startOfCurrentMonth = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
       1,
     );
-    const endOfThreeMonthsAgo = new Date(
-      threeMonthsAgo.getFullYear(),
-      threeMonthsAgo.getMonth() + 1,
+    const endOfCurrentMonth = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + 1,
       0,
     );
 
-    // Get all saldos for 3 months ago using same method as investments page
+    // Get all saldos for current month using same method as investments page
     const saldoMap = new Map<string, number>();
     let totalSaldo = 0;
 
+    console.log("Processing saldos for", investors.length, "investors");
+    console.log("Date range:", {
+      startOfCurrentMonth: startOfCurrentMonth.toISOString(),
+      endOfCurrentMonth: endOfCurrentMonth.toISOString(),
+    });
+
+    const investorsWithKode = investors.filter((investor) => investor.kode);
+    console.log("Investors with kode:", investorsWithKode.length);
+
     await Promise.all(
-      investors
-        .filter((investor) => investor.kode)
-        .map(async (investor) => {
-          const kreditSum = await prisma.mutasiRecord.aggregate({
-            where: {
-              investorId: investor.id,
-              tanggal: { lte: endOfThreeMonthsAgo },
-              mutasi: "KREDIT",
-            },
-            _sum: { nilai_mutasi: true },
-          });
+      investorsWithKode.map(async (investor) => {
+        console.log("Processing investor:", investor.kode, investor.id);
 
-          const debetSum = await prisma.mutasiRecord.aggregate({
-            where: {
-              investorId: investor.id,
-              tanggal: { lte: endOfThreeMonthsAgo },
-              mutasi: "DEBET",
-            },
-            _sum: { nilai_mutasi: true },
-          });
+        const kreditSum = await prisma.mutasiRecord.aggregate({
+          where: {
+            investorId: investor.id,
+            tanggal: { lte: endOfCurrentMonth },
+            mutasi: "KREDIT",
+          },
+          _sum: { nilai_mutasi: true },
+        });
 
-          const saldo =
-            Number(kreditSum._sum.nilai_mutasi || 0) -
-            Number(debetSum._sum.nilai_mutasi || 0);
-          saldoMap.set(investor.id, saldo);
-          totalSaldo += saldo;
-        }),
+        const debetSum = await prisma.mutasiRecord.aggregate({
+          where: {
+            investorId: investor.id,
+            tanggal: { lte: endOfCurrentMonth },
+            mutasi: "DEBET",
+          },
+          _sum: { nilai_mutasi: true },
+        });
+
+        const saldo =
+          Number(kreditSum._sum.nilai_mutasi || 0) -
+          Number(debetSum._sum.nilai_mutasi || 0);
+        saldoMap.set(investor.id, saldo);
+        totalSaldo += saldo;
+      }),
     );
 
-    // Calculate Modal: total nilai from breakdowns for 3 months ago
+    // Calculate Modal: total nilai from breakdowns for current month (the month when button is clicked)
     const modalAggregate = await prisma.breakdown.aggregate({
       where: {
         tanggal: {
-          gte: startOfThreeMonthsAgo,
-          lte: endOfThreeMonthsAgo,
+          gte: startOfCurrentMonth,
+          lte: endOfCurrentMonth,
         },
       },
       _sum: {
@@ -85,16 +94,14 @@ export async function POST(request: NextRequest) {
       ? Number(modalAggregate._sum.nilai)
       : 0;
 
-    // Dana Tersedia: total deposits (following dana page)
-    const totalDanaTersedia = await prisma.deposit.aggregate({
-      _sum: {
-        nilai: true,
-      },
-    });
-    const danaTersedia = Number(totalDanaTersedia._sum.nilai || 0);
+    // Dana Tersedia is totalSaldo (same as investments page)
+    const danaTersedia = totalSaldo;
 
-    // Persen-M: modal / danaTersedia * 100
-    const persenM = danaTersedia > 0 ? (modal / danaTersedia) * 100 : 0;
+    // Persen-M: modal / danaTersedia * 100 (capped at 100)
+    const persenM =
+      danaTersedia > 0 ? Math.min(100, (modal / danaTersedia) * 100) : 0;
+
+    console.log("Calculations:", { modal, danaTersedia, persenM, totalSaldo });
 
     for (let i = 0; i < investors.length; i++) {
       const investor = investors[i];
@@ -105,8 +112,14 @@ export async function POST(request: NextRequest) {
       // Calculate dana_terpakai: saldo * (persenM / 100) - same as investments page
       const dana_terpakai = saldo * (persenM / 100);
 
-      // nilai_mutasi for kredit: dana_terpakai (3 months ago)
+      // nilai_mutasi for kredit: dana_terpakai from current month
       const nilaiMutasi = dana_terpakai;
+
+      console.log("Investor:", investor.kode, {
+        saldo,
+        dana_terpakai,
+        nilaiMutasi,
+      });
 
       if (nilaiMutasi > 0) {
         // Get last saldo for this investor
@@ -131,14 +144,14 @@ export async function POST(request: NextRequest) {
 
         await prisma.mutasiRecord.create({
           data: {
-            tanggal: currentDate,
+            tanggal: threeMonthsLater,
             kode: investor.kode,
             nama: investor.nama,
             rekening_bank: investor.rekening_bank,
             mutasi: "KREDIT",
             nilai_mutasi: nilaiMutasi,
             saldo_akhir: newSaldo,
-            keterangan: `Dana terpakai (${startOfThreeMonthsAgo.toLocaleDateString(
+            keterangan: `Dana terpakai (${startOfCurrentMonth.toLocaleDateString(
               "id-ID",
               { month: "long", year: "numeric" },
             )})`,
@@ -147,13 +160,13 @@ export async function POST(request: NextRequest) {
         });
 
         console.log(
-          `Dana terpakai 3 bulan lalu processed for investor ${investor.kode}: ${nilaiMutasi}`,
+          `Dana terpakai processed for investor ${investor.kode}: ${nilaiMutasi}`,
         );
       }
     }
 
     return NextResponse.json({
-      message: "Dana terpakai 3 bulan lalu mutations processed successfully",
+      message: "Dana terpakai mutations processed successfully",
     });
   } catch (error) {
     console.error("Error processing dana terpakai mutations:", error);

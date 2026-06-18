@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import * as bcrypt from "bcrypt-ts";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  secret:
+    process.env.NEXTAUTH_SECRET ??
+    // Dev fallback only. For production set NEXTAUTH_SECRET.
+    "dev-only-change-me",
   providers: [
     CredentialsProvider({
       name: "credentials",

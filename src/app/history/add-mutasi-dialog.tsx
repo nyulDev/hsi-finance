@@ -178,30 +178,26 @@ export function AddMutasiDialog({
     setIsLoadingData(true);
     setInputError(null);
     try {
-      console.log("Fetching data...");
+      console.log("[AddMutasi] Fetching investors and history...");
 
-      // Ambil data investors dan transactions
+      // Fetch investors dan transactions secara terpisah agar jika salah satu gagal
+      // yang lain tetap bisa ditampilkan
       const [investorsRes, transactionsRes] = await Promise.all([
         fetch("/api/investors"),
         fetch("/api/history"),
       ]);
 
-      if (investorsRes.ok && transactionsRes.ok) {
+      console.log("[AddMutasi] investorsRes.status:", investorsRes.status);
+      console.log("[AddMutasi] transactionsRes.status:", transactionsRes.status);
+
+      // Handle investors - WAJIB berhasil untuk dropdown
+      if (investorsRes.ok) {
         const investorsData = await investorsRes.json();
-        const transactionsData = await transactionsRes.json();
+        console.log("[AddMutasi] Investors loaded:", investorsData?.length, "items", investorsData);
+        setInvestors(Array.isArray(investorsData) ? investorsData : []);
 
-        console.log("Investors data:", investorsData);
-        console.log("Transactions data:", transactionsData);
-
-        setInvestors(investorsData);
-        setTransactions(transactionsData);
-
-        // Jika dalam user mode atau sudah pilih investor, hitung saldo
+        // Jika dalam user mode, set data investor dari userKode
         if (isUserMode && userKode) {
-          const balance = calculateInvestorBalance(userKode, transactionsData);
-          setInvestorSaldo(balance);
-
-          // Cari data investor
           const investor = investorsData.find(
             (inv: Investor) => inv.kode === userKode,
           );
@@ -210,18 +206,35 @@ export function AddMutasiDialog({
             setValue("nama", investor.nama || "");
             setValue("rekening_bank", investor.rekening_bank || "");
           }
-        } else if (kodeValue) {
-          const balance = calculateInvestorBalance(kodeValue, transactionsData);
+        }
+      } else {
+        const errText = await investorsRes.text();
+        console.error("[AddMutasi] Investors fetch FAILED:", investorsRes.status, errText);
+        setInputError(`Gagal memuat data investor (${investorsRes.status}). Silakan coba lagi.`);
+      }
+
+      // Handle transactions - opsional, hanya untuk hitung saldo
+      if (transactionsRes.ok) {
+        const transactionsData = await transactionsRes.json();
+        console.log("[AddMutasi] Transactions loaded:", transactionsData?.length, "items");
+        setTransactions(Array.isArray(transactionsData) ? transactionsData : []);
+
+        if (isUserMode && userKode) {
+          const balance = calculateInvestorBalance(userKode, transactionsData);
           setInvestorSaldo(balance);
         }
+      } else {
+        console.warn("[AddMutasi] Transactions fetch failed:", transactionsRes.status);
+        // Tidak error fatal, saldo tidak akan dihitung
       }
     } catch (error) {
-      console.error("Error fetching data:", error);
+      console.error("[AddMutasi] Error fetching data:", error);
       setInputError("Gagal mengambil data. Silakan coba lagi.");
     } finally {
       setIsLoadingData(false);
     }
-  }, [isUserMode, userKode, kodeValue, setValue, calculateInvestorBalance]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUserMode, userKode, setValue, calculateInvestorBalance]);
 
   // Fungsi untuk refresh data saat dialog dibuka
   const refreshData = useCallback(async () => {
@@ -300,9 +313,9 @@ export function AddMutasiDialog({
       return;
     }
 
-    // Validasi bukti transfer untuk user mode
+    // Validasi bukti transfer untuk KREDIT (SETORAN)
     if (isUserMode && data.mutasi === "KREDIT" && !buktiTransferFile) {
-      alert("Bukti Transfer wajib diisi untuk pengguna.");
+      alert("Bukti Transfer wajib diisi untuk transaksi setoran (KREDIT).");
       return;
     }
 
@@ -455,16 +468,28 @@ export function AddMutasiDialog({
                 className="bg-gray-50"
               />
             ) : (
-              <Select onValueChange={handleInvestorSelect} value={kodeValue}>
+              <Select
+                onValueChange={handleInvestorSelect}
+                value={kodeValue || undefined}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Pilih investor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {investors.map((investor) => (
-                    <SelectItem key={investor.kode} value={investor.kode || ""}>
-                      {investor.kode} - {investor.nama}
-                    </SelectItem>
-                  ))}
+                  {investors.length === 0 ? (
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      {isLoadingData ? "Memuat..." : "Tidak ada data investor"}
+                    </div>
+                  ) : (
+                    investors.map((investor) => (
+                      <SelectItem
+                        key={investor.kode ?? investor.nama ?? Math.random().toString()}
+                        value={investor.kode ?? `_no_kode_${investor.nama}`}
+                      >
+                        {investor.kode ?? "(no kode)"} - {investor.nama}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             )}
@@ -577,6 +602,10 @@ export function AddMutasiDialog({
             <Select
               onValueChange={(value: "KREDIT" | "DEBET") => {
                 setValue("mutasi", value);
+                // Reset bukti transfer jika berganti ke DEBET
+                if (value === "DEBET") {
+                  setBuktiTransferFile(null);
+                }
               }}
               value={mutasiValue}
             >
@@ -646,7 +675,7 @@ export function AddMutasiDialog({
             />
           </div>
 
-          {/* Field Bukti Transfer - Hanya untuk KREDIT */}
+          {/* Field Bukti Transfer - Hanya untuk KREDIT (SETORAN) */}
           {mutasiValue === "KREDIT" && (
             <div className="space-y-2">
               <Label htmlFor="bukti_transfer">
@@ -670,7 +699,7 @@ export function AddMutasiDialog({
               )}
               {isUserMode && (
                 <p className="text-xs text-gray-500">
-                  * Bukti transfer wajib diisi untuk pengguna
+                  * Bukti transfer wajib diisi untuk transaksi setoran (KREDIT)
                 </p>
               )}
             </div>
