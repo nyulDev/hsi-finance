@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "../../../../lib/prisma";
-import { auth } from "../../../../lib/auth";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { getToken } from "next-auth/jwt";
 
 export async function GET(request: NextRequest) {
-  console.time("GET /api/history");
+  const timerLabel = `GET /api/history:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  console.time(timerLabel);
   try {
     const url = new URL(request.url);
     const searchParams = url.searchParams;
     const action = searchParams.get("action");
-    const limit = parseInt(searchParams.get("limit") || "100000");
+    const limit = parseInt(searchParams.get("limit") || "50");
     const page = parseInt(searchParams.get("page") || "1");
     const skip = (page - 1) * limit;
 
@@ -43,6 +45,44 @@ export async function GET(request: NextRequest) {
       }));
 
       return NextResponse.json(formattedRecent);
+    }
+
+    if (action === "saldoByInvestor") {
+      // Lightweight: fetch only fields needed for balance calculation
+      const kodeParam = searchParams.get("kode");
+      const whereClause: any = {};
+      if (kodeParam) whereClause.kode = kodeParam;
+
+      const records = await prisma.mutasiRecord.findMany({
+        where: whereClause,
+        select: {
+          kode: true,
+          mutasi: true,
+          nilai_mutasi: true,
+          admin1_status: true,
+          admin2_status: true,
+          tanggal: true,
+          createdAt: true,
+          id: true,
+          // minimal fields — no investor join needed
+          nama: true,
+          rekening_bank: true,
+          saldo_akhir: true,
+          keterangan: true,
+          bukti_transfer: true,
+          investorId: true,
+        },
+        orderBy: [{ tanggal: "asc" }, { createdAt: "asc" }],
+      });
+
+      return NextResponse.json(
+        records.map((r) => ({
+          ...r,
+          nilai_mutasi: Number(r.nilai_mutasi),
+          saldo_akhir: Number(r.saldo_akhir),
+          investor: null,
+        })),
+      );
     }
 
     if (action === "currentSaldo") {
@@ -84,21 +124,36 @@ export async function GET(request: NextRequest) {
     }
 
     // Default: paginated history records
-    const historyRecords = await prisma.mutasiRecord.findMany({
-      include: {
-        investor: true,
-      },
-      orderBy: [
-        {
-          tanggal: "desc",
+    const searchParam = searchParams.get("search") || "";
+    const kodeParam = searchParams.get("kode") || "";
+
+    const whereClause: any = {};
+    if (kodeParam) {
+      whereClause.kode = kodeParam;
+    }
+    if (searchParam) {
+      whereClause.OR = [
+        { kode: { contains: searchParam, mode: "insensitive" } },
+        { nama: { contains: searchParam, mode: "insensitive" } },
+        { keterangan: { contains: searchParam, mode: "insensitive" } },
+      ];
+    }
+
+    const [historyRecords, totalCount] = await Promise.all([
+      prisma.mutasiRecord.findMany({
+        where: whereClause,
+        include: {
+          investor: true,
         },
-        {
-          createdAt: "desc",
-        },
-      ],
-      take: limit,
-      skip: skip,
-    });
+        orderBy: [
+          { tanggal: "desc" },
+          { createdAt: "desc" },
+        ],
+        take: limit,
+        skip: skip,
+      }),
+      prisma.mutasiRecord.count({ where: whereClause }),
+    ]);
 
     // Convert Decimal to number
     const formattedHistory = historyRecords.map((h) => ({
@@ -109,7 +164,13 @@ export async function GET(request: NextRequest) {
       bukti_transfer: h.bukti_transfer,
     }));
 
-    return NextResponse.json(formattedHistory);
+    return NextResponse.json({
+      data: formattedHistory,
+      totalCount,
+      page,
+      pageSize: limit,
+      totalPages: Math.ceil(totalCount / limit),
+    });
   } catch (error) {
     console.error("Error fetching history:", error);
     return NextResponse.json(
@@ -117,15 +178,58 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   } finally {
-    console.timeEnd("GET /api/history");
+    console.timeEnd(timerLabel);
   }
 }
 
 export async function POST(request: NextRequest) {
-  console.time("POST /api/history");
+  const timerLabel = `POST /api/history:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  console.time(timerLabel);
   try {
     const session = await auth();
+
     if (!session) {
+      // Debug: bantu lacak kenapa auth() null
+      const cookieHeader = request.headers.get("cookie") || "";
+      const cookieNames = cookieHeader
+        ? cookieHeader
+            .split(";")
+            .map((c) => c.split("=")[0]?.trim())
+            .filter(Boolean)
+        : [];
+
+      // Debug secret environment availability (no values)
+      console.error("[POST /api/history] auth secret env flags", {
+        hasNEXTAUTH_SECRET: !!process.env.NEXTAUTH_SECRET,
+        hasAUTH_SECRET: !!process.env.AUTH_SECRET,
+      });
+
+      // Coba fallback: ambil token JWT langsung dari cookie session-token
+      try {
+        const token = await getToken({ req: request as any });
+        console.error("[POST /api/history] auth() null but getToken()", {
+          tokenPresent: !!token,
+          tokenKeys: token ? Object.keys(token as any) : [],
+        });
+      } catch (e) {
+        console.error("[POST /api/history] getToken() failed", {
+          message: (e as Error)?.message,
+        });
+      }
+
+      // Jangan log nilai cookie (sensitif). Hanya nama-nama cookie yang masuk.
+      console.error("[POST /api/history] auth() returned null", {
+        hasCookieHeader: cookieHeader.length > 0,
+        cookieHeaderLength: cookieHeader.length,
+        cookieNames,
+        nextAuthCookieNamesDetected: cookieNames.filter((n) =>
+          /next-auth|nextauth|session-token|authjs|__Secure-next-auth/i.test(n),
+        ),
+        hasAuthorizationHeader: !!request.headers.get("authorization"),
+        origin: request.headers.get("origin"),
+        referer: request.headers.get("referer"),
+      });
+
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -306,6 +410,6 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   } finally {
-    console.timeEnd("POST /api/history");
+    console.timeEnd(timerLabel);
   }
 }

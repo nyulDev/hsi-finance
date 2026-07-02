@@ -4,7 +4,6 @@ import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   SortingState,
   useReactTable,
@@ -18,8 +17,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DataTablePagination } from "@/components/TablePagination";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useState, useMemo } from "react";
 
@@ -36,25 +33,11 @@ export function DataTable<TData, TValue>({
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [rowSelection, setRowSelection] = useState({});
-  const [searchText, setSearchText] = useState("");
-
-  const filteredData = useMemo(
-    () =>
-      data.filter(
-        (item) =>
-          (item as any).kode
-            ?.toLowerCase()
-            .includes(searchText.toLowerCase()) ||
-          (item as any).nama?.toLowerCase().includes(searchText.toLowerCase()),
-      ),
-    [data, searchText],
-  );
 
   const table = useReactTable({
-    data: filteredData,
+    data,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
@@ -62,15 +45,17 @@ export function DataTable<TData, TValue>({
       sorting,
       rowSelection,
     },
-    initialState: {
-      pagination: {
-        pageSize: 100,
-      },
-    },
   });
 
   const selectedRows = table.getFilteredSelectedRowModel().rows;
   const selectedIds = selectedRows.map((row) => (row.original as any).id);
+
+  const handleBulkDelete = () => {
+    if (onBulkDelete) {
+      onBulkDelete(selectedIds);
+      setRowSelection({});
+    }
+  };
 
   return (
     <div className="rounded-md border">
@@ -82,7 +67,7 @@ export function DataTable<TData, TValue>({
           <Button
             variant="destructive"
             size="sm"
-            onClick={() => onBulkDelete(selectedIds)}
+            onClick={handleBulkDelete}
           >
             Delete Selected
           </Button>
@@ -130,7 +115,6 @@ export function DataTable<TData, TValue>({
           )}
         </TableBody>
       </Table>
-      <DataTablePagination table={table} />
     </div>
   );
 }

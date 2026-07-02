@@ -33,20 +33,14 @@ import {
 } from "@/components/ui/sheet";
 import EditUser from "@/components/EditUser";
 
-interface User {
-  id: string;
-  name: string | null;
-  kode: string | null;
-  email: string | null;
-  role: string | null;
-  emailVerified: boolean | null;
-}
+import type { AppUser } from "@/types/user";
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
+
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);

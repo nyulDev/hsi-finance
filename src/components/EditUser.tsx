@@ -31,17 +31,10 @@ const formSchema = z.object({
   password: z.string().optional(),
 });
 
-interface User {
-  id: string;
-  name: string | null;
-  email: string | null;
-  kode: string | null;
-  role: string | null;
-  emailVerified: Date | null;
-}
+import type { AppUser } from "@/types/user";
 
 interface EditUserProps {
-  user?: User;
+  user?: AppUser;
   onUpdate?: () => void;
 }
 

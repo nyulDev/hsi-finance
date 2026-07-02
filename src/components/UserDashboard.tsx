@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import Image from "next/image"; // Import Image component
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,7 @@ type HistoryRecord = {
   bukti_transfer: string | null;
   admin1_status?: "PROSES" | "APPROVE" | "REJECT";
   admin2_status?: "PENDING" | "PROSES" | "APPROVE" | "REJECT";
-  status?: "PROSES" | "APPROVE" | "REJECT"; // For backward compatibility
+  status?: "PROSES" | "APPROVE" | "REJECT";
   investor: {
     id: string;
     nama: string | null;
@@ -83,7 +84,7 @@ const columns: ColumnDef<HistoryRecord>[] = [
           className={cn(
             "text-xs font-semibold px-2 py-1",
             mutasi === "KREDIT" &&
-              "bg-green-100 text-green-800 border-green-200",
+            "bg-green-100 text-green-800 border-green-200",
             mutasi === "DEBET" && "bg-red-100 text-red-800 border-red-200",
           )}
         >
@@ -201,19 +202,27 @@ const columns: ColumnDef<HistoryRecord>[] = [
       return bukti ? (
         <Dialog>
           <DialogTrigger asChild>
-            <img
-              src={bukti}
-              alt="Bukti Transfer"
-              className="w-16 h-16 object-cover rounded cursor-pointer hover:opacity-80"
-            />
+            <div className="relative w-16 h-16 cursor-pointer hover:opacity-80 rounded overflow-hidden">
+              <Image
+                src={bukti}
+                alt="Bukti Transfer"
+                fill
+                className="object-cover"
+                sizes="(max-width: 768px) 64px, 64px"
+              />
+            </div>
           </DialogTrigger>
           <DialogContent className="max-w-4xl">
             <DialogTitle className="sr-only">Bukti Transfer</DialogTitle>
-            <img
-              src={bukti}
-              alt="Bukti Transfer"
-              className="w-full h-auto max-h-[80vh] object-contain"
-            />
+            <div className="relative w-full h-[80vh]">
+              <Image
+                src={bukti}
+                alt="Bukti Transfer"
+                fill
+                className="object-contain"
+                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 80vw, 70vw"
+              />
+            </div>
           </DialogContent>
         </Dialog>
       ) : (
@@ -235,15 +244,12 @@ const UserDashboard = () => {
       const res = await fetch("/api/investor/history");
       if (res.ok) {
         const result = await res.json();
-        // Transform to match HistoryRecord format
         const transformedData: HistoryRecord[] = result.transactions.map(
           (t: any) => {
-            // Derive admin statuses from old status if new fields are not available
             let admin1_status = t.admin1_status;
             let admin2_status = t.admin2_status;
 
             if (!admin1_status && !admin2_status && t.status) {
-              // Fallback to old status field
               if (t.status === "FIRST_APPROVED") {
                 admin1_status = "APPROVE";
                 admin2_status = "PROSES";
@@ -272,7 +278,7 @@ const UserDashboard = () => {
               bukti_transfer: t.bukti_transfer,
               admin1_status,
               admin2_status,
-              status: t.status, // Keep for backward compatibility
+              status: t.status,
               createdAt: t.createdAt,
               updatedAt: t.updatedAt,
               investorId: t.investorId,
@@ -299,7 +305,6 @@ const UserDashboard = () => {
   useEffect(() => {
     if (session) {
       fetchData();
-      // Check if current date is between 1-7
       const currentDay = new Date().getDate();
       const isAllowed = currentDay >= 1 && currentDay <= 7;
       if (!isAllowed) {
@@ -389,7 +394,6 @@ const UserDashboard = () => {
                         nilai_mutasi: t.nilai_mutasi,
                         saldo_akhir: t.saldo_akhir,
                         keterangan: t.keterangan,
-                        // IMPORTANT: Include admin status fields
                         admin1_status: t.admin1_status,
                         admin2_status: t.admin2_status,
                       }))}
@@ -405,7 +409,7 @@ const UserDashboard = () => {
                 <DataTable
                   columns={columns}
                   data={data}
-                  onBulkDelete={() => {}}
+                  onBulkDelete={() => { }}
                 />
               </CardContent>
             </Card>

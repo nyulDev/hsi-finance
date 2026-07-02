@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
         const newSaldo = previousSaldo - nilaiMutasi;
 
         mutationsToCreate.push({
-          tanggal: currentDate,
+          tanggal: new Date(currentYear, currentMonth, 1), // Tanggal 1 bulan yang dipilih
           kode: investor.kode,
           nama: investor.nama,
           rekening_bank: investor.rekening_bank,

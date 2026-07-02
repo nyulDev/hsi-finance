@@ -115,13 +115,15 @@ export function SectionCards() {
 
   const fetchRecentTransactions = async () => {
     try {
-      const response = await fetch("/api/history");
+      const response = await fetch("/api/history?action=recent");
       if (response.ok) {
         const data = await response.json();
+        // action=recent returns array directly
+        const transactions = Array.isArray(data) ? data : (data.data ?? []);
         const now = new Date();
         const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-        const recent = data.filter((transaction: any) => {
+        const recent = transactions.filter((transaction: any) => {
           const transactionDate = new Date(
             transaction.tanggal || transaction.createdAt,
           );

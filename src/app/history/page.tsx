@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { HistoryRecord, columns } from "./columns";
 import { DataTable } from "./data-table";
@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Loader2 } from "lucide-react";
 
 const HistoryPage = () => {
   const { data: session, status } = useSession();
@@ -37,6 +38,7 @@ const HistoryPage = () => {
   console.log("Current userRole:", userRole);
 
   const [data, setData] = useState<HistoryRecord[]>([]);
+  const [investors, setInvestors] = useState<{ kode: string | null; nama: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [investorFilter, setInvestorFilter] = useState<string>("all");
@@ -47,16 +49,59 @@ const HistoryPage = () => {
     null,
   );
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState("");
-  const [actionType, setActionType] = useState<"DEBET" | "KREDIT" | "DANA_TERPAKAI" | "">("");
+  const getCurrentMonthString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    return `${year}-${month}`;
+  };
 
-  const fetchData = async () => {
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthString());
+  const [actionType, setActionType] = useState<"DEBET" | "KREDIT" | "DANA_TERPAKAI" | "">("");
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  // Debounced search state
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = (value: string) => {
+    setSearchText(value);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedSearch(value);
+      setCurrentPage(1);
+    }, 400);
+  };
+
+  const fetchData = async (page = currentPage) => {
     console.time("fetchData");
     try {
-      const res = await fetch("/api/history?limit=1000000");
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(pageSize),
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (investorFilter !== "all") params.set("kode", investorFilter);
+
+      const res = await fetch(`/api/history?${params.toString()}`);
       if (res.ok) {
         const result = await res.json();
-        setData(result);
+        // Handle both old array response and new paginated response
+        if (Array.isArray(result)) {
+          setData(result);
+          setTotalCount(result.length);
+          setTotalPages(1);
+        } else {
+          setData(result.data);
+          setTotalCount(result.totalCount);
+          setTotalPages(result.totalPages);
+        }
       }
     } catch (error) {
       console.error("Error fetching history data:", error);
@@ -66,18 +111,38 @@ const HistoryPage = () => {
     }
   };
 
+  const fetchInvestors = async () => {
+    try {
+      const res = await fetch("/api/investors");
+      if (res.ok) {
+        const result = await res.json();
+        setInvestors(Array.isArray(result) ? result : []);
+      }
+    } catch (error) {
+      console.error("Error fetching investors:", error);
+    }
+  };
+
   useEffect(() => {
     if (status === "authenticated") {
-      fetchData();
+      fetchInvestors();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  useEffect(() => {
+    if (status === "authenticated") {
+      fetchData(currentPage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, currentPage, investorFilter, debouncedSearch]);
+
   const handleSuccess = () => {
-    fetchData();
+    fetchData(currentPage);
   };
 
   const handleDelete = async (id: string) => {
-    fetchData(); // Refresh data after delete
+    fetchData(currentPage); // Refresh data after delete
   };
 
   const handleBulkDelete = async (ids: string[]) => {
@@ -93,12 +158,12 @@ const HistoryPage = () => {
 
         if (failedDeletes === 0) {
           alert(`Successfully deleted ${ids.length} records`);
-          fetchData();
+          fetchData(currentPage);
         } else {
           alert(
             `Failed to delete ${failedDeletes} out of ${ids.length} records`,
           );
-          fetchData(); // Refresh anyway to show current state
+          fetchData(currentPage); // Refresh anyway to show current state
         }
       } catch (error) {
         console.error("Error deleting records:", error);
@@ -141,7 +206,7 @@ const HistoryPage = () => {
           body: JSON.stringify({ status }),
         });
         if (res.ok) {
-          fetchData();
+          fetchData(currentPage);
         } else {
           alert("Failed to approve transaction");
         }
@@ -163,7 +228,7 @@ const HistoryPage = () => {
           body: JSON.stringify({ status: "REJECT" }),
         });
         if (res.ok) {
-          fetchData();
+          fetchData(currentPage);
         } else {
           alert("Failed to reject transaction");
         }
@@ -174,23 +239,8 @@ const HistoryPage = () => {
     }
   };
 
-  // Get unique investors for filter
-  const uniqueInvestors = Array.from(
-    new Set(data.map((record) => record.nama).filter(Boolean)),
-  ).sort();
-
-  // Filter data based on search and investor filter
-  const filteredData = data.filter((record) => {
-    const matchesSearch =
-      record.kode?.toLowerCase().includes(searchText.toLowerCase()) ||
-      record.nama?.toLowerCase().includes(searchText.toLowerCase()) ||
-      record.keterangan?.toLowerCase().includes(searchText.toLowerCase());
-
-    const matchesInvestor =
-      investorFilter === "all" || record.nama === investorFilter;
-
-    return matchesSearch && matchesInvestor;
-  });
+  // filteredData: search & filter sudah dilakukan server-side
+  const filteredData = data;
 
   if (status === "loading" || loading) {
     return <div>Loading...</div>;
@@ -201,17 +251,20 @@ const HistoryPage = () => {
       <div className="mb-8 px-4 py-2 bg-secondary rounded-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
           <h1 className="font-semibold">History Mutasi</h1>
-          <Select value={investorFilter} onValueChange={setInvestorFilter}>
+          <Select value={investorFilter} onValueChange={(v) => { setInvestorFilter(v); setCurrentPage(1); }}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Filter Investor" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Semua Investor</SelectItem>
-              {uniqueInvestors.map((investor) => (
-                <SelectItem key={investor} value={investor || ""}>
-                  {investor}
-                </SelectItem>
-              ))}
+              {investors
+                .filter((inv) => inv.kode)
+                .sort((a, b) => (a.nama ?? "").localeCompare(b.nama ?? ""))
+                .map((investor) => (
+                  <SelectItem key={investor.kode!} value={investor.kode!}>
+                    {investor.kode} - {investor.nama}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
           {/* Search Input */}
@@ -219,7 +272,7 @@ const HistoryPage = () => {
             <Input
               placeholder="Cari..."
               value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              onChange={(e) => { handleSearchChange(e.target.value); }}
               className="w-[200px]"
             />
           </div>
@@ -283,6 +336,53 @@ const HistoryPage = () => {
         data={filteredData}
         onBulkDelete={handleBulkDelete}
       />
+
+      {/* Server-side Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-2 py-4">
+          <p className="text-sm text-muted-foreground">
+            Menampilkan {(currentPage - 1) * pageSize + 1}–
+            {Math.min(currentPage * pageSize, totalCount)} dari {totalCount} data
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
+              «
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              ‹ Prev
+            </Button>
+            <span className="text-sm font-medium px-2">
+              Halaman {currentPage} / {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next ›
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+            >
+              »
+            </Button>
+          </div>
+        </div>
+      )}
       <EditMutasiDialog
         recordId={editingRecordId}
         open={editDialogOpen}
@@ -300,7 +400,7 @@ const HistoryPage = () => {
         }}
         onSuccess={handleSuccess}
       />
-      <Dialog open={actionDialogOpen} onOpenChange={setActionDialogOpen}>
+      <Dialog open={actionDialogOpen} onOpenChange={(open) => { if (!isProcessing) { setActionDialogOpen(open); if (!open) setSelectedMonth(getCurrentMonthString()); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -309,25 +409,43 @@ const HistoryPage = () => {
               {actionType === "DANA_TERPAKAI" && "Proses Auto Kredit (Dana Terpakai +)"}
             </DialogTitle>
           </DialogHeader>
+
+          {/* Loading overlay */}
+          {isProcessing && (
+            <div className="absolute inset-0 bg-white/80 dark:bg-black/60 flex flex-col items-center justify-center z-[60] rounded-lg gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm font-medium text-muted-foreground">Sedang memproses, harap tunggu...</p>
+            </div>
+          )}
+
           <div className="py-4">
             <label className="block text-sm font-medium mb-2">Pilih Bulan & Tahun</label>
-            <Input
+            <input
               type="month"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
+              disabled={isProcessing}
+              style={{ colorScheme: "light" }}
+              className="flex h-10 w-full rounded-md border border-gray-300 bg-white text-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setActionDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => { setActionDialogOpen(false); setSelectedMonth(getCurrentMonthString()); }}
+              disabled={isProcessing}
+            >
               Batal
             </Button>
             <Button
+              disabled={isProcessing || !selectedMonth}
               onClick={async () => {
                 if (!selectedMonth) return;
                 const [year, month] = selectedMonth.split("-");
                 // month is 1-indexed string, we need 0-indexed for backend
                 const monthIndex = parseInt(month, 10) - 1;
-                
+
+                setIsProcessing(true);
                 try {
                   let url = "";
                   if (actionType === "DEBET") url = "/api/history/process-debet";
@@ -348,18 +466,28 @@ const HistoryPage = () => {
                   });
                   if (res.ok) {
                     alert("Proses berhasil");
-                    fetchData();
+                    fetchData(currentPage);
                     setActionDialogOpen(false);
+                    setSelectedMonth(getCurrentMonthString());
                   } else {
                     alert("Proses gagal");
                   }
                 } catch (error) {
                   console.error("Error processing:", error);
                   alert("Error saat memproses data");
+                } finally {
+                  setIsProcessing(false);
                 }
               }}
             >
-              Proses
+              {isProcessing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Memproses...
+                </>
+              ) : (
+                "Proses"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

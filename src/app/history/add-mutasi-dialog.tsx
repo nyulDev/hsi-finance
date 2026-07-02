@@ -33,7 +33,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const formSchema = z.object({
   tanggal: z.date({
@@ -183,18 +182,32 @@ export function AddMutasiDialog({
       // Fetch investors dan transactions secara terpisah agar jika salah satu gagal
       // yang lain tetap bisa ditampilkan
       const [investorsRes, transactionsRes] = await Promise.all([
-        fetch("/api/investors"),
-        fetch("/api/history"),
+        fetch("/api/investors", { credentials: "include" }),
+        fetch(`/api/history?action=saldoByInvestor${isUserMode && userKode ? `&kode=${encodeURIComponent(userKode)}` : ""}&limit=10000`, { credentials: "include" }),
       ]);
 
       console.log("[AddMutasi] investorsRes.status:", investorsRes.status);
-      console.log("[AddMutasi] transactionsRes.status:", transactionsRes.status);
+      console.log(
+        "[AddMutasi] transactionsRes.status:",
+        transactionsRes.status,
+      );
 
       // Handle investors - WAJIB berhasil untuk dropdown
       if (investorsRes.ok) {
         const investorsData = await investorsRes.json();
-        console.log("[AddMutasi] Investors loaded:", investorsData?.length, "items", investorsData);
-        setInvestors(Array.isArray(investorsData) ? investorsData : []);
+        console.log(
+          "[AddMutasi] Investors loaded:",
+          investorsData?.length,
+          "items",
+          investorsData,
+        );
+
+        // Only keep investors with a valid kode (kode is required by /api/history POST)
+        const normalizedInvestors = Array.isArray(investorsData)
+          ? investorsData
+          : [];
+
+        setInvestors(normalizedInvestors.filter((inv: Investor) => !!inv.kode));
 
         // Jika dalam user mode, set data investor dari userKode
         if (isUserMode && userKode) {
@@ -209,14 +222,28 @@ export function AddMutasiDialog({
         }
       } else {
         const errText = await investorsRes.text();
-        console.error("[AddMutasi] Investors fetch FAILED:", investorsRes.status, errText);
-        setInputError(`Gagal memuat data investor (${investorsRes.status}). Silakan coba lagi.`);
+        console.error(
+          "[AddMutasi] Investors fetch FAILED:",
+          investorsRes.status,
+          errText,
+        );
+        setInputError(
+          `Gagal memuat data investor (${investorsRes.status}). Silakan coba lagi.`,
+        );
       }
 
       // Handle transactions - opsional, hanya untuk hitung saldo
       if (transactionsRes.ok) {
-        const transactionsData = await transactionsRes.json();
-        console.log("[AddMutasi] Transactions loaded:", transactionsData?.length, "items");
+        const transactionsJson = await transactionsRes.json();
+        // API sekarang return { data, totalCount, ... } bukan array langsung
+        const transactionsData = Array.isArray(transactionsJson)
+          ? transactionsJson
+          : transactionsJson.data ?? [];
+        console.log(
+          "[AddMutasi] Transactions loaded:",
+          transactionsData?.length,
+          "items",
+        );
         setTransactions(Array.isArray(transactionsData) ? transactionsData : []);
 
         if (isUserMode && userKode) {
@@ -224,7 +251,10 @@ export function AddMutasiDialog({
           setInvestorSaldo(balance);
         }
       } else {
-        console.warn("[AddMutasi] Transactions fetch failed:", transactionsRes.status);
+        console.warn(
+          "[AddMutasi] Transactions fetch failed:",
+          transactionsRes.status,
+        );
         // Tidak error fatal, saldo tidak akan dihitung
       }
     } catch (error) {
@@ -233,7 +263,7 @@ export function AddMutasiDialog({
     } finally {
       setIsLoadingData(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUserMode, userKode, setValue, calculateInvestorBalance]);
 
   // Fungsi untuk refresh data saat dialog dibuka
@@ -262,16 +292,29 @@ export function AddMutasiDialog({
   }, [mutasiValue, nilaiMutasi, investorSaldo]);
 
   // Saat investor dipilih (mode admin)
-  const handleInvestorSelect = (investorKode: string) => {
+  const handleInvestorSelect = async (investorKode: string) => {
     const investor = investors.find((inv) => inv.kode === investorKode);
     if (investor) {
       setValue("kode", investor.kode || "");
       setValue("nama", investor.nama || "");
       setValue("rekening_bank", investor.rekening_bank || "");
 
-      // Hitung saldo untuk investor yang dipilih
-      const balance = calculateInvestorBalance(investorKode, transactions);
-      setInvestorSaldo(balance);
+      // Fetch saldo khusus investor ini (ringan, tidak load semua transaksi)
+      try {
+        const res = await fetch(
+          `/api/history?action=saldoByInvestor&kode=${encodeURIComponent(investorKode)}&limit=10000`,
+          { credentials: "include" },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const records = Array.isArray(data) ? data : data.data ?? [];
+          setTransactions(records);
+          const balance = calculateInvestorBalance(investorKode, records);
+          setInvestorSaldo(balance);
+        }
+      } catch {
+        // Tidak fatal, saldo tidak ditampilkan
+      }
     }
   };
 
@@ -341,6 +384,7 @@ export function AddMutasiDialog({
         formDataUpload.append("file", buktiTransferFile);
         const uploadResponse = await fetch("/api/upload", {
           method: "POST",
+          credentials: "include",
           body: formDataUpload,
         });
 
@@ -370,6 +414,7 @@ export function AddMutasiDialog({
 
       const res = await fetch("/api/history", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -483,10 +528,10 @@ export function AddMutasiDialog({
                   ) : (
                     investors.map((investor) => (
                       <SelectItem
-                        key={investor.kode ?? investor.nama ?? Math.random().toString()}
-                        value={investor.kode ?? `_no_kode_${investor.nama}`}
+                        key={investor.kode ?? investor.nama}
+                        value={investor.kode as string}
                       >
-                        {investor.kode ?? "(no kode)"} - {investor.nama}
+                        {investor.kode} - {investor.nama}
                       </SelectItem>
                     ))
                   )}

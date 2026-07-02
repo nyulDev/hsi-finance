@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
@@ -23,18 +23,16 @@ export async function POST(request: NextRequest) {
 
     const currentDate = new Date();
 
-    // Get 3 months in the future date (e.g., clicked in February → transaction in May)
-    const threeMonthsLater = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 3,
-      1,
-    );
-
-    // ── Ikuti logika investments page ──────────────────────────────────────
-    // Investments page menggunakan tanggal 1-8 bulan berjalan (current month)
-    // dan filter admin2_status = "APPROVE"
     const currentYear = requestBody.year !== undefined ? Number(requestBody.year) : currentDate.getFullYear();
     const currentMonth = requestBody.month !== undefined ? Number(requestBody.month) : currentDate.getMonth(); // 0-indexed
+
+    // Tanggal transaksi = 3 bulan setelah bulan yang DIPILIH (bukan waktu server)
+    // Contoh: pilih Juni (month=5) → threeMonthsLater = September (month=8)
+    const threeMonthsLater = new Date(
+      currentYear,
+      currentMonth + 3,
+      1,
+    );
 
     const startDate = new Date(currentYear, currentMonth, 1, 0, 0, 0);
     const endDate = new Date(currentYear, currentMonth, 8, 23, 59, 59);
